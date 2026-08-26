@@ -1,0 +1,10 @@
+.partners { display:grid; gap:12px; padding:16px; border:1px solid var(--line); border-radius:10px; background:#f5f7f1; }
+.partners-title { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.partners-title b, .partners-title small { display:block; }
+.partners-title small { color:var(--muted); font-weight:400; margin-top:3px; }
+.partners-title .outline { display:flex; align-items:center; gap:5px; padding:8px 10px; }
+.partners-title svg { width:16px; }
+.partner-row { display:grid; grid-template-columns:1fr 140px 32px; align-items:end; gap:10px; }
+.partner-row > .icon { margin-bottom:6px; }
+@media(max-width:600px) { .partner-row { grid-template-columns:1fr 100px 32px; } .partners-title { align-items:flex-start; flex-direction:column; } }
+.conference .currency-input { width:145px; text-align:right; font-variant-numeric:tabular-nums; }

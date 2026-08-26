@@ -1,0 +1,22 @@
+.export-table { padding-bottom: 0; margin-bottom: 0; }
+.export-wrap { position: relative; }
+.export-menu { position: relative; z-index: 1; display: inline-block; }
+.export-trigger { border: 1px solid #b7c5ba; background: #fff; color: var(--green); border-radius: 7px; padding: 8px 11px; display: flex; align-items: center; gap: 6px; font-weight: 700; white-space: nowrap; }
+.export-trigger svg { width: 15px; }
+.export-options { position: absolute; z-index: 2; top: 0; right: calc(100% + 8px); width: 230px; padding: 6px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 35px #183b2b2b; display: none; }
+.export-menu.open .export-options { display: grid; }
+.export-options button { border: 0; background: transparent; border-radius: 7px; padding: 9px; display: flex; align-items: center; gap: 10px; text-align: left; color: #27382f; }
+.export-options button:hover { background: #edf3e8; }
+.export-options svg { width: 17px; color: var(--green); }
+.export-options span, .export-options b, .export-options small { display: block; }
+.export-options small { color: var(--muted); font-size: 10px; margin-top: 2px; }
+.export-error { display: block; color: #a63529; font-size: 10px; margin-top: 3px; }
+.danfe-preview-overlay { position: fixed; inset: 0; z-index: 100; padding: 20px; display: grid; place-items: center; background: #07150fdb; backdrop-filter: blur(3px); }
+.danfe-preview-modal { width: min(1100px, 100%); height: min(94vh, 900px); display: grid; grid-template-rows: auto 1fr; overflow: hidden; border-radius: 12px; background: #e8ece8; box-shadow: 0 24px 80px #0008; }
+.danfe-preview-head { min-height: 52px; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; background: #fff; border-bottom: 1px solid var(--line); }
+.danfe-preview-head button { width: 34px; height: 34px; padding: 7px; display: grid; place-items: center; border: 0; border-radius: 7px; background: #edf2ee; color: #30483a; }
+.danfe-preview-head svg { width: 19px; }
+.danfe-preview-scroll { overflow: auto; padding: 20px; }
+.danfe-preview-page { width: 198mm; min-height: 285mm; margin: 0 auto; background: #fff; box-shadow: 0 4px 22px #0002; }
+.danfe-preview-page .df-page { min-height: 285mm; }
+@media(max-width:800px){.danfe-preview-overlay{padding:8px}.danfe-preview-scroll{padding:10px}.danfe-preview-page{margin:0}}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+Arquivo Irpf/
+Inscrições teste/
+XML EXEMPLO/
+releases/
+.vscode/
+.env
+.env.*
+!.env.example
+*.log
