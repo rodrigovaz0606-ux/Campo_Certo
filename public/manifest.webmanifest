@@ -1,0 +1,32 @@
+{
+  "name": "Campo Certo",
+  "short_name": "Campo Certo",
+  "description": "Gestão de produtores rurais, fazendas e notas fiscais.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f5ef",
+  "theme_color": "#174c36",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/icons/campo-certo-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/campo-certo-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/campo-certo-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

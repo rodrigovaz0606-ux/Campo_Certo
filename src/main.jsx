@@ -32,6 +32,14 @@ import "./partners.css";
 import "./export.css";
 import { exportDanfePdf, exportMultipleDanfePdf, renderDanfePreview } from "./danfe.js";
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js").catch((error) => {
+      console.warn("Não foi possível registrar o aplicativo Campo Certo.", error);
+    });
+  });
+}
+
 const money = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",

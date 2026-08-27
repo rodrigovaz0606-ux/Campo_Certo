@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Campo Certo">
+  <rect width="512" height="512" rx="112" fill="#174c36"/>
+  <circle cx="256" cy="256" r="166" fill="#c9e26d"/>
+  <path d="M256 359V236" fill="none" stroke="#174c36" stroke-width="32" stroke-linecap="round"/>
+  <path d="M248 250c-73 1-116-38-118-109 69-3 116 35 118 109Z" fill="#174c36"/>
+  <path d="M264 215c7-68 48-105 116-101 0 68-40 105-116 101Z" fill="#174c36"/>
+  <path d="M178 371c24-34 50-51 78-51s54 17 78 51" fill="none" stroke="#174c36" stroke-width="28" stroke-linecap="round"/>
+</svg>
