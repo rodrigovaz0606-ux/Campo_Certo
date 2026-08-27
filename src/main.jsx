@@ -134,8 +134,7 @@ function ThemeToggle({ theme, onToggle }) {
 }
 
 function Auth({ onAuth, theme, onThemeToggle }) {
-  const [register, setRegister] = useState(false),
-    [loading, setLoading] = useState(false),
+  const [loading, setLoading] = useState(false),
     [error, setError] = useState("");
   const submit = async (e) => {
     e.preventDefault();
@@ -143,7 +142,7 @@ function Auth({ onAuth, theme, onThemeToggle }) {
     setError("");
     const values = Object.fromEntries(new FormData(e.currentTarget));
     try {
-      const data = await api(`/auth/${register ? "register" : "login"}`, {
+      const data = await api("/auth/login", {
         method: "POST",
         body: JSON.stringify(values),
       });
@@ -188,19 +187,9 @@ function Auth({ onAuth, theme, onThemeToggle }) {
         </div>
         <div className="form-card">
           <p className="eyebrow">BEM-VINDO</p>
-          <h2>{register ? "Crie sua conta" : "Acesse sua conta"}</h2>
-          <p className="muted">
-            {register
-              ? "Comece agora a organizar sua operação."
-              : "Entre para continuar gerenciando sua operação."}
-          </p>
+          <h2>Acesse sua conta</h2>
+          <p className="muted">Entre para continuar gerenciando sua operação.</p>
           <form onSubmit={submit}>
-            {register && (
-              <label>
-                Nome completo
-                <input name="name" required placeholder="Seu nome" />
-              </label>
-            )}
             <label>
               E-mail
               <input
@@ -222,20 +211,9 @@ function Auth({ onAuth, theme, onThemeToggle }) {
             </label>
             {error && <div className="error">{error}</div>}
             <button className="primary" disabled={loading}>
-              {loading ? "Aguarde..." : register ? "Criar conta" : "Entrar"}
+              {loading ? "Aguarde..." : "Entrar"}
             </button>
           </form>
-          <div className="switch">
-            {register ? "Já possui uma conta?" : "Ainda não tem uma conta?"}{" "}
-            <button
-              onClick={() => {
-                setRegister(!register);
-                setError("");
-              }}
-            >
-              {register ? "Entrar" : "Cadastre-se"}
-            </button>
-          </div>
         </div>
       </main>
     </div>
@@ -255,6 +233,7 @@ const nav = [
 function Shell({ user, onLogout, theme, onThemeToggle }) {
   const [page, setPage] = useState("dashboard"),
     [open, setOpen] = useState(false);
+  const availableNav = user.is_admin ? [...nav, ["users", "Usuários", Users]] : nav;
   return (
     <div className="app">
       <aside className={open ? "open" : ""}>
@@ -268,7 +247,7 @@ function Shell({ user, onLogout, theme, onThemeToggle }) {
           </button>
         </div>
         <nav>
-          {nav.map(([id, label, Icon]) => (
+          {availableNav.map(([id, label, Icon]) => (
             <button
               key={id}
               className={page === id ? "active" : ""}
@@ -300,12 +279,12 @@ function Shell({ user, onLogout, theme, onThemeToggle }) {
           </button>
           <div>
             <p className="eyebrow">PAINEL DE GESTÃO</p>
-            <h2>{nav.find((x) => x[0] === page)?.[1]}</h2>
+            <h2>{availableNav.find((x) => x[0] === page)?.[1]}</h2>
           </div>
           <ThemeToggle theme={theme} onToggle={onThemeToggle} />
           <span className="today">Safra organizada, decisão segura.</span>
         </header>
-        <Page id={page} navigate={setPage} />
+        <Page id={page} navigate={setPage} user={user} />
       </main>
     </div>
   );
@@ -328,7 +307,7 @@ function useData() {
   }, []);
   return [data, reload];
 }
-function Page({ id, navigate }) {
+function Page({ id, navigate, user }) {
   const [data, reload] = useData();
   if (id === "dashboard") return <Dashboard navigate={navigate} />;
   if (id === "producers")
@@ -362,7 +341,63 @@ function Page({ id, navigate }) {
   if (id === "import") return <Importer data={data} />;
   if (id === "conference") return <Conference data={data} />;
   if (id === "annual-summary") return <AnnualSummary data={data} />;
+  if (id === "users" && user.is_admin) return <UserManagement currentUser={user} />;
   return <CattleSummary data={data} />;
+}
+
+function UserManagement({ currentUser }) {
+  const [users, setUsers] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+  const load = () => api("/users").then(setUsers);
+  useEffect(() => { load(); }, []);
+  const submit = async (event) => {
+    event.preventDefault(); setLoading(true); setError(""); setMessage("");
+    try {
+      const form = event.currentTarget;
+      await api("/users", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+      form.reset(); setMessage("Usuário criado com sucesso."); await load();
+    } catch (caught) { setError(caught.message); }
+    finally { setLoading(false); }
+  };
+  const updateUser = async (event) => {
+    event.preventDefault(); setLoading(true); setError(""); setMessage("");
+    try {
+      await api(`/users/${editing.id}`, { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+      setEditing(null); setMessage("Usuário atualizado com sucesso."); await load();
+    } catch (caught) { setError(caught.message); }
+    finally { setLoading(false); }
+  };
+  const removeUser = async (item) => {
+    setError(""); setMessage("");
+    try { await api(`/users/${item.id}`, { method: "DELETE" }); setPendingDelete(null); setMessage("Usuário excluído com sucesso."); await load(); }
+    catch (caught) { setError(caught.message); }
+  };
+  return <>
+    <div className="toolbar"><div><h1>Usuários</h1><p>Somente o administrador pode criar acessos ao Campo Certo.</p></div></div>
+    <div className="user-management">
+      <form className="list-card user-create" onSubmit={submit}>
+        <h3>Novo usuário</h3>
+        <label>Nome completo<input name="name" required /></label>
+        <label>E-mail<input name="email" type="email" required /></label>
+        <label>Senha inicial<input name="password" type="password" minLength="6" required /></label>
+        {error && <div className="error">{error}</div>}{message && <div className="success">{message}</div>}
+        <button className="primary" disabled={loading}>{loading ? "Criando..." : "Criar usuário"}</button>
+      </form>
+      <div className="list-card"><div className="search"><b>Usuários cadastrados</b></div><div className="table-wrap"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Ações</th></tr></thead><tbody>{users.map(item => <tr key={item.id}><td><b>{item.name}</b></td><td>{item.email}</td><td>{item.is_admin ? "Administrador" : "Usuário"}</td><td><div className="row-actions"><button className="icon" title={`Editar ${item.name}`} aria-label={`Editar ${item.name}`} onClick={() => { setEditing(item); setError(""); }}><Pencil /></button><button className="icon danger" disabled={item.id === currentUser.id} title={item.id === currentUser.id ? "Você não pode excluir sua própria conta" : `Excluir ${item.name}`} aria-label={`Excluir ${item.name}`} onClick={() => setPendingDelete(item)}><Trash2 /></button></div></td></tr>)}</tbody></table></div></div>
+    </div>
+    {editing && <Modal title="Editar usuário" close={() => setEditing(null)}><form className="modal-form" onSubmit={updateUser}>
+      <label>Nome completo<input name="name" required defaultValue={editing.name} /></label>
+      <label>E-mail<input name="email" type="email" required defaultValue={editing.email} /></label>
+      <label>Nova senha (opcional)<input name="password" type="password" minLength="6" placeholder="Deixe em branco para manter a atual" /></label>
+      {error && <div className="error">{error}</div>}
+      <div className="actions"><button type="button" onClick={() => setEditing(null)}>Cancelar</button><button className="primary" disabled={loading}>{loading ? "Salvando..." : "Salvar alterações"}</button></div>
+    </form></Modal>}
+    {pendingDelete && <ConfirmDialog title="Excluir usuário" message={`Deseja excluir o usuário ${pendingDelete.name}? Essa ação não poderá ser desfeita.`} close={() => setPendingDelete(null)} confirm={() => removeUser(pendingDelete)} />}
+  </>;
 }
 
 function Dashboard({ navigate }) {
@@ -463,6 +498,7 @@ function Crud({ type, title, items, producers, reload }) {
     [search, setSearch] = useState(""),
     [ownership, setOwnership] = useState("unique"),
     [partners, setPartners] = useState([{ document: "", share: "" }]);
+  const [pendingDelete, setPendingDelete] = useState(null);
   const filtered = items.filter((i) =>
     JSON.stringify(i).toLowerCase().includes(search.toLowerCase()),
   );
@@ -490,10 +526,9 @@ function Crud({ type, title, items, producers, reload }) {
     }
   };
   const remove = async (id) => {
-    if (confirm("Deseja realmente excluir este cadastro?")) {
-      await api(`/${type}/${id}`, { method: "DELETE" });
-      reload();
-    }
+    await api(`/${type}/${id}`, { method: "DELETE" });
+    setPendingDelete(null);
+    reload();
   };
   return (
     <>
@@ -580,7 +615,7 @@ function Crud({ type, title, items, producers, reload }) {
                         className="icon danger"
                         title="Excluir cadastro"
                         aria-label={`Excluir ${i.name}`}
-                        onClick={() => remove(i.id)}
+                        onClick={() => setPendingDelete(i)}
                       >
                         <Trash2 />
                       </button>
@@ -666,6 +701,7 @@ function Crud({ type, title, items, producers, reload }) {
           </form>
         </Modal>
       )}
+      {pendingDelete && <ConfirmDialog title="Excluir cadastro" message={`Deseja realmente excluir ${pendingDelete.name}? Essa ação não poderá ser desfeita.`} close={() => setPendingDelete(null)} confirm={() => remove(pendingDelete.id)} />}
     </>
   );
 }
@@ -870,6 +906,7 @@ function Conference({ data }) {
     [selected, setSelected] = useState([]),
     [bulkBusy, setBulkBusy] = useState(false),
     [bulkError, setBulkError] = useState(""),
+    [pendingDelete, setPendingDelete] = useState(null),
     [columnFilters, setColumnFilters] = useState({
       issue_date: "", producer_id: "", participant_id: "", invoice_number: "",
       amount: "", operation_type: "", ncm_category: "", cattle_quantity: "",
@@ -922,7 +959,7 @@ function Conference({ data }) {
     });
   }, []);
   const update = (id, key, value) =>
-    setRows(rows.map((r) => (r.id === id ? { ...r, [key]: value } : r)));
+    setRows(rows.map((r) => (r.id === id ? { ...r, [key]: value, is_reviewed: 0 } : r)));
   const save = async (row) => {
     await api("/invoices/" + row.id, {
       method: "PUT",
@@ -931,10 +968,9 @@ function Conference({ data }) {
     load();
   };
   const remove = async (id) => {
-    if (confirm("Excluir esta nota?")) {
-      await api("/invoices/" + id, { method: "DELETE" });
-      load();
-    }
+    await api("/invoices/" + id, { method: "DELETE" });
+    setPendingDelete(null);
+    load();
   };
   const toggle = (id) => setSelected(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]);
   const allVisibleSelected = filteredRows.length > 0 && filteredRows.every(row => selected.includes(row.id));
@@ -967,10 +1003,10 @@ function Conference({ data }) {
     finally { setBulkBusy(false); }
   };
   const removeSelected = async () => {
-    if (!confirm(`Excluir permanentemente ${selected.length} nota(s) selecionada(s)?`)) return;
     setBulkBusy(true); setBulkError("");
     try {
       await api("/invoices/bulk", { method: "DELETE", body: JSON.stringify({ ids: selected }) });
+      setPendingDelete(null);
       load();
     } catch (error) { setBulkError(error.message); }
     finally { setBulkBusy(false); }
@@ -1045,7 +1081,7 @@ function Conference({ data }) {
         <strong>{selected.length} nota(s) selecionada(s)</strong>
         <button className="outline" disabled={bulkBusy} onClick={exportSelected}><Download />Exportar XMLs em ZIP</button>
         <button className="outline" disabled={bulkBusy} onClick={exportSelectedPdf}><FileText />Exportar DANFEs em PDF</button>
-        <button className="bulk-delete" disabled={bulkBusy} onClick={removeSelected}><Trash2 />Excluir selecionadas</button>
+        <button className="bulk-delete" disabled={bulkBusy} onClick={() => setPendingDelete({ kind: "bulk" })}><Trash2 />Excluir selecionadas</button>
         {bulkError && <span className="error">{bulkError}</span>}
       </div>}
       <div className="list-card conference">
@@ -1153,13 +1189,13 @@ function Conference({ data }) {
                       />
                     </td>
                     <td>
-                      <select className={`operation-select ${r.operation_type || "outgoing"}`} value={r.operation_type || "outgoing"} onChange={(e) => update(r.id, "operation_type", e.target.value)}>
+                      <select className={`operation-select ${r.operation_type || "outgoing"} ${r.is_reviewed ? "reviewed" : "pending-review"}`} title={r.is_reviewed ? "Nota conferida" : "Nota pendente de conferência"} aria-label={`${r.operation_type === "incoming" ? "Entrada" : "Saída"} — ${r.is_reviewed ? "nota conferida" : "nota pendente de conferência"}`} value={r.operation_type || "outgoing"} onChange={(e) => update(r.id, "operation_type", e.target.value)}>
                         <option value="incoming">Entrada</option>
                         <option value="outgoing">Saída</option>
                       </select>
                     </td>
                     <td>
-                      <select className={`ncm-category-select ${r.ncm_category || "other"}`} title={r.ncm_codes || "NCM não informado"} value={r.ncm_category || "other"} onChange={(e) => setRows(rows.map(row => row.id === r.id ? { ...row, ncm_category: e.target.value, cattle_quantity: e.target.value === "cattle" ? row.cattle_quantity : null } : row))}>
+                      <select className={`ncm-category-select ${r.ncm_category || "other"}`} title={r.ncm_codes || "NCM não informado"} value={r.ncm_category || "other"} onChange={(e) => setRows(rows.map(row => row.id === r.id ? { ...row, ncm_category: e.target.value, cattle_quantity: e.target.value === "cattle" ? row.cattle_quantity : null, is_reviewed: 0 } : row))}>
                         <option value="cattle">Gado</option>
                         <option value="soy">Soja</option>
                         <option value="other">Outros</option>
@@ -1176,7 +1212,7 @@ function Conference({ data }) {
                         </button>
                         <button
                           className="icon danger"
-                          onClick={() => remove(r.id)}
+                          onClick={() => setPendingDelete({ kind: "single", id: r.id, number: r.invoice_number })}
                         >
                           <Trash2 />
                         </button>
@@ -1197,6 +1233,7 @@ function Conference({ data }) {
         <div><small>Total de saídas</small><strong>{money.format(totals.outgoing)}</strong></div>
         <div className="balance"><small>Saldo (saídas − entradas)</small><strong>{money.format(totals.outgoing - totals.incoming)}</strong></div>
       </div>}
+      {pendingDelete && <ConfirmDialog title={pendingDelete.kind === "bulk" ? "Excluir notas selecionadas" : "Excluir nota"} message={pendingDelete.kind === "bulk" ? `Deseja excluir permanentemente ${selected.length} nota(s) selecionada(s)?` : `Deseja excluir a nota ${pendingDelete.number || pendingDelete.id}? Essa ação não poderá ser desfeita.`} close={() => setPendingDelete(null)} confirm={() => pendingDelete.kind === "bulk" ? removeSelected() : remove(pendingDelete.id)} loading={bulkBusy} />}
     </>
   );
 }
@@ -1445,6 +1482,18 @@ function Modal({ title, close, children }) {
     </div>
   );
 }
+function ConfirmDialog({ title, message, close, confirm, loading = false }) {
+  return <Modal title={title} close={close}>
+    <div className="confirm-dialog">
+      <div className="confirm-symbol"><Trash2 /></div>
+      <p>{message}</p>
+      <div className="actions">
+        <button type="button" onClick={close} disabled={loading}>Cancelar</button>
+        <button type="button" className="confirm-delete" onClick={confirm} disabled={loading}>{loading ? "Excluindo..." : "Excluir"}</button>
+      </div>
+    </div>
+  </Modal>;
+}
 function Empty({ text }) {
   return (
     <div className="empty">
@@ -1474,6 +1523,10 @@ function App() {
     document.documentElement.style.colorScheme = theme;
     localStorage.setItem("theme", theme);
   }, [theme]);
+  useEffect(() => {
+    if (!user || !localStorage.getItem("token")) return;
+    api("/me").then(current => { localStorage.setItem("user", JSON.stringify(current)); setUser(current); }).catch(() => {});
+  }, []);
   const toggleTheme = () => setTheme((current) => current === "dark" ? "light" : "dark");
   return user ? (
     <Shell

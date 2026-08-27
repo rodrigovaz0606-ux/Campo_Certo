@@ -79,25 +79,65 @@ const removedInvoices = reconcileInvoiceCpf()
 if (removedInvoices) console.log(`${removedInvoices} nota(s) removida(s) por divergência de CPF.`)
 
 function auth(req, res, next) {
-  try { req.user = jwt.verify((req.headers.authorization || '').replace('Bearer ', ''), secret); next() }
+  try {
+    const tokenUser = jwt.verify((req.headers.authorization || '').replace('Bearer ', ''), secret)
+    const user = db.prepare('SELECT id,name,email,is_admin FROM users WHERE id=?').get(tokenUser.id)
+    if (!user) throw new Error('Usuário removido')
+    req.user = user
+    next()
+  }
   catch { res.status(401).json({ error: 'Sessão inválida ou expirada.' }) }
 }
 
+function adminOnly(req, res, next) {
+  if (!req.user?.is_admin) return res.status(403).json({ error: 'Somente o administrador pode gerenciar usuários.' })
+  next()
+}
+
 app.post('/api/auth/register', asyncRoute(async (req, res) => {
+  if (db.prepare('SELECT COUNT(*) total FROM users').get().total) return res.status(403).json({ error: 'O cadastro público está desativado.' })
   const { name, email, password } = req.body
   if (!name || !email || !password || password.length < 6) return res.status(400).json({ error: 'Informe nome, e-mail e senha com ao menos 6 caracteres.' })
-  const result = db.prepare('INSERT INTO users (name,email,password_hash) VALUES (?,?,?)').run(name.trim(), email.trim().toLowerCase(), await bcrypt.hash(password, 10))
-  const token = jwt.sign({ id: result.lastInsertRowid, name, email }, secret, { expiresIn: '8h' })
-  res.status(201).json({ token, user: { id: result.lastInsertRowid, name, email } })
+  const result = db.prepare('INSERT INTO users (name,email,password_hash,is_admin) VALUES (?,?,?,1)').run(name.trim(), email.trim().toLowerCase(), await bcrypt.hash(password, 10))
+  const user = { id: Number(result.lastInsertRowid), name: name.trim(), email: email.trim().toLowerCase(), is_admin: 1 }
+  res.status(201).json({ token: jwt.sign(user, secret, { expiresIn: '8h' }), user })
 }))
 app.post('/api/auth/login', asyncRoute(async (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE email=?').get(String(req.body.email || '').trim().toLowerCase())
   if (!user || !(await bcrypt.compare(req.body.password || '', user.password_hash))) return res.status(401).json({ error: 'E-mail ou senha incorretos.' })
-  const safe = { id: user.id, name: user.name, email: user.email }
+  const safe = { id: user.id, name: user.name, email: user.email, is_admin: user.is_admin }
   res.json({ token: jwt.sign(safe, secret, { expiresIn: '8h' }), user: safe })
 }))
 
 app.use('/api', auth)
+app.get('/api/me', (req, res) => res.json(req.user))
+app.get('/api/users', adminOnly, (req, res) => res.json(db.prepare('SELECT id,name,email,is_admin,created_at FROM users ORDER BY name').all()))
+app.post('/api/users', adminOnly, asyncRoute(async (req, res) => {
+  const name = cleanText(req.body.name); const email = cleanText(req.body.email).toLowerCase(); const password = String(req.body.password || '')
+  if (!name || !email || password.length < 6) return res.status(400).json({ error: 'Informe nome, e-mail e senha com ao menos 6 caracteres.' })
+  if (db.prepare('SELECT id FROM users WHERE email=?').get(email)) return res.status(409).json({ error: 'Já existe um usuário com este e-mail.' })
+  const result = db.prepare('INSERT INTO users (name,email,password_hash,is_admin) VALUES (?,?,?,0)').run(name,email,await bcrypt.hash(password,10))
+  res.status(201).json({ id: Number(result.lastInsertRowid), name, email, is_admin: 0 })
+}))
+app.put('/api/users/:id', adminOnly, asyncRoute(async (req, res) => {
+  const id = Number(req.params.id); const name = cleanText(req.body.name); const email = cleanText(req.body.email).toLowerCase(); const password = String(req.body.password || '')
+  const existing = db.prepare('SELECT id,is_admin FROM users WHERE id=?').get(id)
+  if (!existing) return res.status(404).json({ error: 'Usuário não encontrado.' })
+  if (!name || !email || (password && password.length < 6)) return res.status(400).json({ error: 'Informe nome, e-mail e uma senha com ao menos 6 caracteres quando desejar alterá-la.' })
+  if (db.prepare('SELECT id FROM users WHERE email=? AND id<>?').get(email,id)) return res.status(409).json({ error: 'Já existe um usuário com este e-mail.' })
+  if (password) db.prepare('UPDATE users SET name=?,email=?,password_hash=? WHERE id=?').run(name,email,await bcrypt.hash(password,10),id)
+  else db.prepare('UPDATE users SET name=?,email=? WHERE id=?').run(name,email,id)
+  res.json(db.prepare('SELECT id,name,email,is_admin,created_at FROM users WHERE id=?').get(id))
+}))
+app.delete('/api/users/:id', adminOnly, (req, res) => {
+  const id = Number(req.params.id)
+  if (id === req.user.id) return res.status(400).json({ error: 'O administrador não pode excluir a própria conta.' })
+  const target = db.prepare('SELECT id,is_admin FROM users WHERE id=?').get(id)
+  if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' })
+  if (target.is_admin && db.prepare('SELECT COUNT(*) total FROM users WHERE is_admin=1').get().total <= 1) return res.status(400).json({ error: 'Não é possível excluir o único administrador.' })
+  db.prepare('DELETE FROM users WHERE id=?').run(id)
+  res.status(204).end()
+})
 app.get('/api/dashboard', (req, res) => res.json({
   producers: db.prepare('SELECT COUNT(*) total FROM producers').get().total,
   farms: db.prepare('SELECT COUNT(*) total FROM farms').get().total,
@@ -216,7 +256,7 @@ app.get('/api/invoices', (req, res) => {
   if (req.query.year) { filters.push("strftime('%Y',i.issue_date)=?"); params.push(String(req.query.year)) }
   if (req.query.month) { filters.push("strftime('%m',i.issue_date)=?"); params.push(String(req.query.month).padStart(2,'0')) }
   if (req.query.ncm_category) { filters.push('i.ncm_category=?'); params.push(req.query.ncm_category) }
-  res.json(db.prepare(`SELECT i.id,i.issue_date,i.invoice_number,i.amount,i.operation_type,i.ncm_codes,i.ncm_category,i.cattle_quantity,i.access_key,i.issuer_name,i.original_filename,i.producer_id,i.farm_id,i.participant_id,p.name producer_name,f.name farm_name,pt.name participant_name FROM invoices i JOIN producers p ON p.id=i.producer_id LEFT JOIN farms f ON f.id=i.farm_id LEFT JOIN participants pt ON pt.id=i.participant_id ${filters.length?'WHERE '+filters.join(' AND '):''} ORDER BY COALESCE(i.issue_date,i.created_at) DESC`).all(...params))
+  res.json(db.prepare(`SELECT i.id,i.issue_date,i.invoice_number,i.amount,i.operation_type,i.ncm_codes,i.ncm_category,i.cattle_quantity,i.is_reviewed,i.access_key,i.issuer_name,i.original_filename,i.producer_id,i.farm_id,i.participant_id,p.name producer_name,f.name farm_name,pt.name participant_name FROM invoices i JOIN producers p ON p.id=i.producer_id LEFT JOIN farms f ON f.id=i.farm_id LEFT JOIN participants pt ON pt.id=i.participant_id ${filters.length?'WHERE '+filters.join(' AND '):''} ORDER BY COALESCE(i.issue_date,i.created_at) DESC`).all(...params))
 })
 app.get('/api/invoice-years', (req, res) => res.json(db.prepare("SELECT DISTINCT strftime('%Y',issue_date) year FROM invoices WHERE issue_date IS NOT NULL ORDER BY year DESC").all().map(row => row.year)))
 app.get('/api/annual-summary', (req, res) => {
@@ -304,7 +344,7 @@ app.put('/api/invoices/:id', (req, res) => {
   const cattleQuantity = ncm_category === 'cattle' && req.body.cattle_quantity !== '' && req.body.cattle_quantity != null ? Number(req.body.cattle_quantity) : null
   if (cattleQuantity != null && (!Number.isInteger(cattleQuantity) || cattleQuantity < 0)) return res.status(400).json({ error: 'A quantidade de gado deve ser um número inteiro igual ou maior que zero.' })
   const operationType = operation_type
-  db.prepare('UPDATE invoices SET issue_date=?,producer_id=?,farm_id=?,participant_id=?,invoice_number=?,amount=?,operation_type=?,ncm_category=?,cattle_quantity=? WHERE id=?').run(issue_date||null,producer_id,farm_id||null,participant_id||null,invoice_number,Number(amount)||0,operationType,ncm_category,cattleQuantity,req.params.id)
+  db.prepare('UPDATE invoices SET issue_date=?,producer_id=?,farm_id=?,participant_id=?,invoice_number=?,amount=?,operation_type=?,ncm_category=?,cattle_quantity=?,is_reviewed=1 WHERE id=?').run(issue_date||null,producer_id,farm_id||null,participant_id||null,invoice_number,Number(amount)||0,operationType,ncm_category,cattleQuantity,req.params.id)
   res.json({ ok: true })
 })
 app.get('/api/invoices/:id/xml', (req, res) => { const row=db.prepare('SELECT original_filename,xml_content FROM invoices WHERE id=?').get(req.params.id); if(!row)return res.status(404).end(); res.type('application/xml').attachment(row.original_filename).send(row.xml_content) })

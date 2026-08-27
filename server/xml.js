@@ -17,6 +17,8 @@ export function parseInvoiceXml(xml) {
   const total = info?.total?.ICMSTot || {}
   const issuer = info?.emit || {}
   const recipient = info?.dest || {}
+  const issuerAddress = first(issuer.enderEmit) || {}
+  const recipientAddress = first(recipient.enderDest) || {}
   const protocol = parsed.nfeProc?.protNFe?.infProt || {}
   const rawDate = ide.dhEmi || ide.dEmi || null
   const details = info?.det ? (Array.isArray(info.det) ? info.det : [info.det]) : []
@@ -32,6 +34,16 @@ export function parseInvoiceXml(xml) {
     recipientName: first(recipient.xNome) || '',
     issuerDocument,
     recipientDocument,
+    issuerAddress: {
+      street: first(issuerAddress.xLgr) || '', number: first(issuerAddress.nro) || '',
+      complement: first(issuerAddress.xCpl) || '', neighborhood: first(issuerAddress.xBairro) || '',
+      zipCode: String(first(issuerAddress.CEP) || '').replace(/\D/g, '')
+    },
+    recipientAddress: {
+      street: first(recipientAddress.xLgr) || '', number: first(recipientAddress.nro) || '',
+      complement: first(recipientAddress.xCpl) || '', neighborhood: first(recipientAddress.xBairro) || '',
+      zipCode: String(first(recipientAddress.CEP) || '').replace(/\D/g, '')
+    },
     ncmCodes,
     ncmCategory: classifyNcm(ncmCodes)
   }

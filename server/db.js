@@ -73,6 +73,13 @@ if (!invoiceColumns.has('ncm_codes')) db.exec('ALTER TABLE invoices ADD COLUMN n
 if (!invoiceColumns.has('ncm_category')) db.exec('ALTER TABLE invoices ADD COLUMN ncm_category TEXT')
 if (!invoiceColumns.has('cattle_quantity')) db.exec('ALTER TABLE invoices ADD COLUMN cattle_quantity INTEGER')
 if (!invoiceColumns.has('content_hash')) db.exec('ALTER TABLE invoices ADD COLUMN content_hash TEXT')
+if (!invoiceColumns.has('is_reviewed')) db.exec('ALTER TABLE invoices ADD COLUMN is_reviewed INTEGER NOT NULL DEFAULT 0')
+const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name))
+if (!userColumns.has('is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0')
+if (!db.prepare('SELECT COUNT(*) total FROM users WHERE is_admin=1').get().total) {
+  const firstUser = db.prepare('SELECT id FROM users ORDER BY id LIMIT 1').get()
+  if (firstUser) db.prepare('UPDATE users SET is_admin=1 WHERE id=?').run(firstUser.id)
+}
 const invoicesWithoutHash = db.prepare('SELECT id,xml_content FROM invoices WHERE content_hash IS NULL').all()
 const saveContentHash = db.prepare('UPDATE invoices SET content_hash=? WHERE id=?')
 db.transaction(rows => rows.forEach(row => saveContentHash.run(crypto.createHash('sha256').update(row.xml_content.replace(/\s+/g, '')).digest('hex'), row.id)))(invoicesWithoutHash)
