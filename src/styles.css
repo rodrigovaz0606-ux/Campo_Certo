@@ -142,6 +142,11 @@
 :root[data-theme="dark"] .annual-report-identification{color:#dce7e0}:root[data-theme="dark"] .annual-report-generated{border-color:#46554b}
 @media(max-width:720px){.annual-summary-actions{width:100%;flex-direction:column}.annual-summary-actions .outline{width:100%;justify-content:center}.annual-report-generated{flex-direction:column;gap:5px}.annual-report-generated span{text-align:left}}
 
+.field-help{color:var(--muted);font-size:11px;font-weight:500;margin-top:-3px}.manual-badge{display:inline-flex;align-items:center;border-radius:20px;padding:6px 10px;background:#eee9d9;color:#725c20;font-size:11px;font-weight:700}
+.manual-invoice-form{grid-template-columns:1fr 1fr}.manual-invoice-form .error,.manual-invoice-form .actions{grid-column:1/-1}
+:root[data-theme="dark"] .manual-badge{background:#3b3320;color:#e2ca78}
+@media(max-width:600px){.manual-invoice-form{grid-template-columns:1fr}.manual-invoice-form .error,.manual-invoice-form .actions{grid-column:auto}}
+
 @media print{
   @page{size:A4 portrait;margin:12mm}
   body *{visibility:hidden!important}

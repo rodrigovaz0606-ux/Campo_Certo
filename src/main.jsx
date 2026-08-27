@@ -60,8 +60,7 @@ const maskCpfCnpj = (v) => {
   return s.length <= 11 ? maskCpf(s) : s.replace(/(\d{2})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1/$2").replace(/(\d{4})(\d{1,2})$/, "$1-$2");
 };
 const maskIe = (v) => {
-  const s = String(v || "").replace(/\D/g, "").slice(0, 9);
-  return s.replace(/(\d{2})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)$/, "$1-$2");
+  return String(v || "").replace(/\D/g, "").slice(0, 14);
 };
 const maskCep = (v) => String(v || "").replace(/\D/g, "").slice(0, 8).replace(/(\d{5})(\d)/, "$1-$2");
 
@@ -70,9 +69,9 @@ function MaskedNumberInput({ name, kind = "cpf", value, defaultValue = "", onVal
   const [internal, setInternal] = useState(() => format(defaultValue));
   const current = value === undefined ? internal : value;
   const change = (raw) => { const formatted = format(raw); value === undefined ? setInternal(formatted) : onValue(formatted); };
-  return <input name={name} value={current} required={required} inputMode="numeric" autoComplete="off" placeholder={placeholder}
-    onKeyDown={(e) => { if (e.key.length === 1 && !/\d/.test(e.key)) e.preventDefault(); }}
-    onPaste={(e) => { if (/\D/.test(e.clipboardData.getData("text"))) e.preventDefault(); }}
+  return <input name={name} value={current} required={required} inputMode="numeric" autoComplete="off" placeholder={placeholder} maxLength={kind === "ie" ? 14 : undefined}
+    onKeyDown={(e) => { if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1 && !/\d/.test(e.key)) e.preventDefault(); }}
+    onPaste={(e) => { e.preventDefault(); change(e.clipboardData.getData("text")); }}
     onChange={(e) => change(e.target.value)} />;
 }
 
@@ -664,7 +663,8 @@ function Crud({ type, title, items, producers, reload }) {
                 </label>
                 <label>
                   Inscrição Estadual
-                  <MaskedNumberInput name="state_registration" kind="ie" placeholder="11.111.111-1" defaultValue={editing?.state_registration} />
+                  <MaskedNumberInput name="state_registration" kind="ie" placeholder="Digite ou cole de 8 a 14 números" defaultValue={editing?.state_registration} />
+                  <small className="field-help">Aceita de 8 a 14 dígitos. São Paulo utiliza 12 dígitos.</small>
                 </label>
                 <AddressFields item={editing || {}} />
                 <label>
@@ -915,6 +915,11 @@ function Conference({ data }) {
     [bulkBusy, setBulkBusy] = useState(false),
     [bulkError, setBulkError] = useState(""),
     [pendingDelete, setPendingDelete] = useState(null),
+    [showManual, setShowManual] = useState(false),
+    [manualBusy, setManualBusy] = useState(false),
+    [manualError, setManualError] = useState(""),
+    [refreshVersion, setRefreshVersion] = useState(0),
+    [manual, setManual] = useState({ producer_id: "", farm_id: "", participant_id: "", issue_date: new Date().toISOString().slice(0, 10), invoice_number: "", amount: 0, operation_type: "outgoing", ncm_category: "other", cattle_quantity: "" }),
     [columnFilters, setColumnFilters] = useState({
       issue_date: "", producer_id: "", participant_id: "", invoice_number: "",
       amount: "", operation_type: "", ncm_category: "", cattle_quantity: "",
@@ -958,7 +963,7 @@ function Conference({ data }) {
   };
   useEffect(() => {
     load();
-  }, [producer, farm, ncmCategory, period, year, month]);
+  }, [producer, farm, ncmCategory, period, year, month, refreshVersion]);
   useEffect(() => {
     api("/invoice-years").then(values => {
       const current = String(new Date().getFullYear());
@@ -975,6 +980,27 @@ function Conference({ data }) {
     });
     load();
   };
+  const openManual = () => {
+    setManual({ producer_id: producer, farm_id: farm, participant_id: "", issue_date: new Date().toISOString().slice(0, 10), invoice_number: "", amount: 0, operation_type: "outgoing", ncm_category: "other", cattle_quantity: "" });
+    setManualError("");
+    setShowManual(true);
+  };
+  const createManual = async (event) => {
+    event.preventDefault();
+    setManualBusy(true); setManualError("");
+    try {
+      await api("/invoices/manual", { method: "POST", body: JSON.stringify(manual) });
+      const createdYear = manual.issue_date.slice(0, 4);
+      setProducer(String(manual.producer_id));
+      setFarm(String(manual.farm_id || ""));
+      setYear(createdYear);
+      if (period === "monthly") setMonth(manual.issue_date.slice(5, 7));
+      setYears(values => [...new Set([createdYear, ...values])]);
+      setShowManual(false);
+      setRefreshVersion(value => value + 1);
+    } catch (error) { setManualError(error.message); }
+    finally { setManualBusy(false); }
+  };
   const remove = async (id) => {
     await api("/invoices/" + id, { method: "DELETE" });
     setPendingDelete(null);
@@ -989,7 +1015,9 @@ function Conference({ data }) {
     setBulkBusy(true); setBulkError("");
     try {
       const zip = new JSZip();
-      const chosen = rows.filter(row => selected.includes(row.id));
+      const chosen = rows.filter(row => selected.includes(row.id) && !row.is_manual);
+      if (!chosen.length) throw new Error("Lançamentos manuais não possuem XML para exportação.");
+      if (chosen.length !== selected.length) setBulkError("Os lançamentos manuais foram ignorados porque não possuem XML.");
       await Promise.all(chosen.map(async row => {
         const response = await invoiceXml(row);
         zip.file(row.original_filename || `nota-${row.invoice_number || row.id}.xml`, await response.blob());
@@ -1004,7 +1032,9 @@ function Conference({ data }) {
   const exportSelectedPdf = async () => {
     setBulkBusy(true); setBulkError("");
     try {
-      const chosen = rows.filter(row => selected.includes(row.id));
+      const chosen = rows.filter(row => selected.includes(row.id) && !row.is_manual);
+      if (!chosen.length) throw new Error("Lançamentos manuais não possuem DANFE para exportação.");
+      if (chosen.length !== selected.length) setBulkError("Os lançamentos manuais foram ignorados porque não possuem DANFE.");
       const xmls = await Promise.all(chosen.map(async row => (await invoiceXml(row)).text()));
       await exportMultipleDanfePdf(xmls);
     } catch (error) { setBulkError(error.message); }
@@ -1026,6 +1056,7 @@ function Conference({ data }) {
           <h1>Conferência de notas</h1>
           <p>Revise e ajuste os dados extraídos dos arquivos XML.</p>
         </div>
+        <button className="primary compact" onClick={openManual}><Plus />Lançar nota manualmente</button>
       </div>
       <div className="filters conference-filters">
         <label>
@@ -1212,7 +1243,7 @@ function Conference({ data }) {
                     <td>
                       {r.ncm_category === "cattle" ? <input className="cattle-quantity" type="number" min="0" step="1" inputMode="numeric" placeholder="Quantidade" value={r.cattle_quantity ?? ""} onChange={(e) => update(r.id, "cattle_quantity", e.target.value)} /> : <span className="not-applicable">Não se aplica</span>}
                     </td>
-                    <td><ExportMenu row={r} /></td>
+                    <td>{r.is_manual ? <span className="manual-badge">Manual</span> : <ExportMenu row={r} />}</td>
                     <td>
                       <div className="row-actions">
                         <button className="save" onClick={() => save(r)}>
@@ -1242,6 +1273,21 @@ function Conference({ data }) {
         <div className="balance"><small>Saldo (saídas − entradas)</small><strong>{money.format(totals.outgoing - totals.incoming)}</strong></div>
       </div>}
       {pendingDelete && <ConfirmDialog title={pendingDelete.kind === "bulk" ? "Excluir notas selecionadas" : "Excluir nota"} message={pendingDelete.kind === "bulk" ? `Deseja excluir permanentemente ${selected.length} nota(s) selecionada(s)?` : `Deseja excluir a nota ${pendingDelete.number || pendingDelete.id}? Essa ação não poderá ser desfeita.`} close={() => setPendingDelete(null)} confirm={() => pendingDelete.kind === "bulk" ? removeSelected() : remove(pendingDelete.id)} loading={bulkBusy} />}
+      {showManual && <Modal title="Lançar nota manualmente" close={() => setShowManual(false)}>
+        <form className="modal-form manual-invoice-form" onSubmit={createManual}>
+          <label>Produtor<select required value={manual.producer_id} onChange={(e) => setManual({ ...manual, producer_id: e.target.value, farm_id: "" })}><option value="" disabled>Selecione o produtor</option>{data.producers.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}</select></label>
+          <label>Fazenda<select value={manual.farm_id} disabled={!manual.producer_id} onChange={(e) => setManual({ ...manual, farm_id: e.target.value })}><option value="">Não informada</option>{data.farms.filter((f) => String(f.producer_id) === String(manual.producer_id)).map((f) => <option value={f.id} key={f.id}>{f.name}</option>)}</select></label>
+          <label>Participante<select value={manual.participant_id} onChange={(e) => setManual({ ...manual, participant_id: e.target.value })}><option value="">Não informado</option>{data.participants.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}</select></label>
+          <label>Data de emissão<input type="date" required value={manual.issue_date} onChange={(e) => setManual({ ...manual, issue_date: e.target.value })} /></label>
+          <label>Número da nota<input required value={manual.invoice_number} onChange={(e) => setManual({ ...manual, invoice_number: e.target.value })} /></label>
+          <label>Valor<CurrencyInput value={manual.amount} onValue={(amount) => setManual({ ...manual, amount })} /></label>
+          <label>Tipo<select value={manual.operation_type} onChange={(e) => setManual({ ...manual, operation_type: e.target.value })}><option value="incoming">Entrada</option><option value="outgoing">Saída</option></select></label>
+          <label>Classificação<select value={manual.ncm_category} onChange={(e) => setManual({ ...manual, ncm_category: e.target.value, cattle_quantity: e.target.value === "cattle" ? manual.cattle_quantity : "" })}><option value="cattle">Gado</option><option value="soy">Soja</option><option value="other">Outros</option></select></label>
+          {manual.ncm_category === "cattle" && <label>Quantidade de gado<input type="number" min="0" step="1" required value={manual.cattle_quantity} onChange={(e) => setManual({ ...manual, cattle_quantity: e.target.value })} /></label>}
+          {manualError && <div className="error">{manualError}</div>}
+          <div className="actions"><button type="button" onClick={() => setShowManual(false)}>Cancelar</button><button className="primary" disabled={manualBusy}>{manualBusy ? "Salvando..." : "Salvar nota"}</button></div>
+        </form>
+      </Modal>}
     </>
   );
 }

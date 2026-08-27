@@ -74,6 +74,7 @@ if (!invoiceColumns.has('ncm_category')) db.exec('ALTER TABLE invoices ADD COLUM
 if (!invoiceColumns.has('cattle_quantity')) db.exec('ALTER TABLE invoices ADD COLUMN cattle_quantity INTEGER')
 if (!invoiceColumns.has('content_hash')) db.exec('ALTER TABLE invoices ADD COLUMN content_hash TEXT')
 if (!invoiceColumns.has('is_reviewed')) db.exec('ALTER TABLE invoices ADD COLUMN is_reviewed INTEGER NOT NULL DEFAULT 0')
+if (!invoiceColumns.has('is_manual')) db.exec('ALTER TABLE invoices ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0')
 const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name))
 if (!userColumns.has('is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0')
 if (!db.prepare('SELECT COUNT(*) total FROM users WHERE is_admin=1').get().total) {
