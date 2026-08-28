@@ -239,10 +239,20 @@ const nav = [
 ];
 function Shell({ user, onLogout, theme, onThemeToggle }) {
   const [page, setPage] = useState("dashboard"),
-    [open, setOpen] = useState(false);
+    [open, setOpen] = useState(false),
+    [sidebarCollapsed, setSidebarCollapsed] = useState(
+      () => localStorage.getItem("sidebar-collapsed") === "true",
+    );
   const availableNav = user.is_admin ? [...nav, ["users", "Usuários", Users]] : nav;
+  const toggleSidebar = () => {
+    setSidebarCollapsed((collapsed) => {
+      const next = !collapsed;
+      localStorage.setItem("sidebar-collapsed", String(next));
+      return next;
+    });
+  };
   return (
-    <div className="app">
+    <div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       <aside className={open ? "open" : ""}>
         <div className="logo">
           <span>
@@ -258,6 +268,7 @@ function Shell({ user, onLogout, theme, onThemeToggle }) {
             <button
               key={id}
               className={page === id ? "active" : ""}
+              title={sidebarCollapsed ? label : undefined}
               onClick={() => {
                 setPage(id);
                 setOpen(false);
@@ -281,7 +292,17 @@ function Shell({ user, onLogout, theme, onThemeToggle }) {
       </aside>
       <main className="content">
         <header>
-          <button className="menu" onClick={() => setOpen(true)}>
+          <button
+            className="menu"
+            type="button"
+            onClick={() => {
+              if (window.matchMedia("(max-width: 720px)").matches) setOpen(true);
+              else toggleSidebar();
+            }}
+            title={sidebarCollapsed ? "Expandir barra lateral" : "Minimizar barra lateral"}
+            aria-label={sidebarCollapsed ? "Expandir barra lateral" : "Minimizar barra lateral"}
+            aria-expanded={!sidebarCollapsed}
+          >
             <Menu />
           </button>
           <div>
@@ -968,6 +989,42 @@ function Conference({ data }) {
     issue_date: "", producer_id: "", farm_id: "", participant_id: "", document_type: "", invoice_number: "",
     amount: "", operation_type: "", ncm_category: "", cattle_quantity: "",
   });
+  const exportSpreadsheet = () => {
+    const documentTypes = { invoice: "Nota fiscal", payroll: "Folha de pagamento", contract: "Contrato" };
+    const operationTypes = { incoming: "Entrada", outgoing: "Saída" };
+    const ncmCategories = { cattle: "Gado", soy: "Soja", other: "Outros" };
+    const safeCell = (value) => {
+      let text = String(value ?? "");
+      if (/^[=+\-@]/.test(text)) text = `'${text}`;
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+    const formatDate = (value) => value
+      ? String(value).slice(0, 10).split("-").reverse().join("/")
+      : "";
+    const header = ["Data", "Produtor", "Fazenda", "Participante", "Documento", "Nº da nota", "Valor", "Tipo", "Classificação NCM", "Quantidade de gado", "Conferida"];
+    const lines = filteredRows.map((row) => [
+      formatDate(row.issue_date),
+      row.producer_name || data.producers.find(item => item.id === row.producer_id)?.name || "",
+      row.farm_name || "Não informada",
+      data.participants.find(item => item.id === row.participant_id)?.name || "Não informado",
+      documentTypes[row.document_type || "invoice"] || row.document_type,
+      row.invoice_number || "",
+      Number(row.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      operationTypes[row.operation_type || "outgoing"],
+      ncmCategories[row.ncm_category || "other"],
+      row.ncm_category === "cattle" ? row.cattle_quantity || "" : "",
+      row.is_reviewed ? "Sim" : "Não",
+    ]);
+    const csv = ["sep=;", header.map(safeCell).join(";"), ...lines.map(line => line.map(safeCell).join(";"))].join("\r\n");
+    const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
+    const producerName = data.producers.find(item => String(item.id) === producer)?.name || "produtor";
+    const safeName = producerName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `conferencia-${safeName || "produtor"}-${year}${period === "monthly" ? `-${month}` : ""}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   const load = () => {
     const sequence = ++loadSequence.current;
     if (!producer) {
@@ -1077,7 +1134,10 @@ function Conference({ data }) {
           <h1>Conferência de notas</h1>
           <p>Revise e ajuste os dados extraídos dos arquivos XML.</p>
         </div>
-        <button className="primary compact" onClick={openManual}><Plus />Lançamento manual</button>
+        <div className="conference-toolbar-actions">
+          <button className="outline compact" type="button" onClick={exportSpreadsheet} disabled={!producer || !filteredRows.length}><Download />Exportar planilha</button>
+          <button className="primary compact" onClick={openManual}><Plus />Lançamento manual</button>
+        </div>
       </div>
       <div className="filters conference-filters">
         <label>
