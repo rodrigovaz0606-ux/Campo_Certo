@@ -717,6 +717,7 @@ function Crud({ type, title, items, producers, reload }) {
 function Importer({ data }) {
   const [files, setFiles] = useState([]),
     [loading, setLoading] = useState(false),
+    [processed, setProcessed] = useState(0),
     [result, setResult] = useState(null),
     [error, setError] = useState("");
   const submit = async (e) => {
@@ -725,10 +726,25 @@ function Importer({ data }) {
       return setError("Escolha os arquivos ou uma pasta com XMLs.");
     setLoading(true);
     setError("");
-    const fd = new FormData(e.currentTarget);
-    files.forEach((f) => fd.append("files", f));
+    const form = new FormData(e.currentTarget);
+    const producerId = form.get("producer_id");
+    const farmId = form.get("farm_id");
+    const batchSize = 200;
+    const consolidated = { imported: 0, duplicates: 0, errors: [] };
+    setProcessed(0);
     try {
-      setResult(await api("/invoices/import", { method: "POST", body: fd }));
+      for (let start = 0; start < files.length; start += batchSize) {
+        const fd = new FormData();
+        fd.append("producer_id", producerId);
+        if (farmId) fd.append("farm_id", farmId);
+        files.slice(start, start + batchSize).forEach((file) => fd.append("files", file));
+        const batch = await api("/invoices/import", { method: "POST", body: fd });
+        consolidated.imported += batch.imported;
+        consolidated.duplicates += batch.duplicates;
+        consolidated.errors.push(...batch.errors);
+        setProcessed(Math.min(start + batchSize, files.length));
+      }
+      setResult(consolidated);
       setFiles([]);
     } catch (e) {
       setError(e.message);
@@ -820,7 +836,7 @@ function Importer({ data }) {
           className="primary import-submit"
           disabled={loading || !data.producers.length}
         >
-          {loading ? "Importando..." : "Importar e processar notas"}
+          {loading ? `Importando... ${processed} de ${files.length}` : "Importar e processar notas"}
         </button>
       </form>
     </>
@@ -902,6 +918,7 @@ function DanfePreview({ xml, close }) {
 }
 
 function Conference({ data }) {
+  const loadSequence = useRef(0);
   const [producer, setProducer] = useState(""),
     [farm, setFarm] = useState(""),
     [ncmCategory, setNcmCategory] = useState(""),
@@ -919,9 +936,9 @@ function Conference({ data }) {
     [manualBusy, setManualBusy] = useState(false),
     [manualError, setManualError] = useState(""),
     [refreshVersion, setRefreshVersion] = useState(0),
-    [manual, setManual] = useState({ producer_id: "", farm_id: "", participant_id: "", issue_date: new Date().toISOString().slice(0, 10), invoice_number: "", amount: 0, operation_type: "outgoing", ncm_category: "other", cattle_quantity: "" }),
+    [manual, setManual] = useState({ producer_id: "", farm_id: "", participant_id: "", document_type: "invoice", issue_date: new Date().toISOString().slice(0, 10), invoice_number: "", amount: 0, operation_type: "outgoing", ncm_category: "other", cattle_quantity: "" }),
     [columnFilters, setColumnFilters] = useState({
-      issue_date: "", producer_id: "", participant_id: "", invoice_number: "",
+      issue_date: "", producer_id: "", farm_id: "", participant_id: "", document_type: "", invoice_number: "",
       amount: "", operation_type: "", ncm_category: "", cattle_quantity: "",
     });
   const farms = data.farms.filter(
@@ -931,7 +948,9 @@ function Conference({ data }) {
     const contains = (value, filter) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(filter.trim().toLocaleLowerCase("pt-BR"));
     return (!columnFilters.issue_date || row.issue_date === columnFilters.issue_date)
       && (!columnFilters.producer_id || String(row.producer_id) === columnFilters.producer_id)
+      && (!columnFilters.farm_id || (columnFilters.farm_id === "unreported" ? !row.farm_id : String(row.farm_id) === columnFilters.farm_id))
       && (!columnFilters.participant_id || (columnFilters.participant_id === "unreported" ? !row.participant_id : String(row.participant_id) === columnFilters.participant_id))
+      && (!columnFilters.document_type || (row.document_type || "invoice") === columnFilters.document_type)
       && contains(row.invoice_number, columnFilters.invoice_number)
       && contains(Number(row.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 }), columnFilters.amount)
       && (!columnFilters.operation_type || (row.operation_type || "outgoing") === columnFilters.operation_type)
@@ -946,10 +965,11 @@ function Conference({ data }) {
   const setColumnFilter = (key, value) => setColumnFilters(current => ({ ...current, [key]: value }));
   const hasColumnFilters = Object.values(columnFilters).some(Boolean);
   const clearColumnFilters = () => setColumnFilters({
-    issue_date: "", producer_id: "", participant_id: "", invoice_number: "",
+    issue_date: "", producer_id: "", farm_id: "", participant_id: "", document_type: "", invoice_number: "",
     amount: "", operation_type: "", ncm_category: "", cattle_quantity: "",
   });
   const load = () => {
+    const sequence = ++loadSequence.current;
     if (!producer) {
       setRows([]);
       setSelected([]);
@@ -958,8 +978,9 @@ function Conference({ data }) {
     }
     setLoading(true);
     api(`/invoices?producer_id=${producer}&farm_id=${farm}&year=${year}&month=${period === "monthly" ? month : ""}&ncm_category=${ncmCategory}`)
-      .then(values => { setRows(values); setSelected([]); })
-      .finally(() => setLoading(false));
+      .then(values => { if (sequence === loadSequence.current) { setRows(values); setSelected([]); } })
+      .catch(() => { if (sequence === loadSequence.current) setRows([]); })
+      .finally(() => { if (sequence === loadSequence.current) setLoading(false); });
   };
   useEffect(() => {
     load();
@@ -981,7 +1002,7 @@ function Conference({ data }) {
     load();
   };
   const openManual = () => {
-    setManual({ producer_id: producer, farm_id: farm, participant_id: "", issue_date: new Date().toISOString().slice(0, 10), invoice_number: "", amount: 0, operation_type: "outgoing", ncm_category: "other", cattle_quantity: "" });
+    setManual({ producer_id: producer, farm_id: farm, participant_id: "", document_type: "invoice", issue_date: new Date().toISOString().slice(0, 10), invoice_number: "", amount: 0, operation_type: "outgoing", ncm_category: "other", cattle_quantity: "" });
     setManualError("");
     setShowManual(true);
   };
@@ -1056,7 +1077,7 @@ function Conference({ data }) {
           <h1>Conferência de notas</h1>
           <p>Revise e ajuste os dados extraídos dos arquivos XML.</p>
         </div>
-        <button className="primary compact" onClick={openManual}><Plus />Lançar nota manualmente</button>
+        <button className="primary compact" onClick={openManual}><Plus />Lançamento manual</button>
       </div>
       <div className="filters conference-filters">
         <label>
@@ -1101,7 +1122,7 @@ function Conference({ data }) {
             <option value="">Todas as fazendas</option>
             {farms.map((f) => (
               <option value={f.id} key={f.id}>
-                {f.name}
+                {f.name} — IE {maskIe(f.state_registration)}
               </option>
             ))}
           </select>
@@ -1136,7 +1157,7 @@ function Conference({ data }) {
               <thead>
                 <tr className="conference-groups">
                   <th className="select-cell" aria-hidden="true" />
-                  <th colSpan="4">Dados do lançamento</th>
+                  <th colSpan="6">Dados do lançamento</th>
                   <th colSpan="2">Movimentação</th>
                   <th colSpan="2">Classificação fiscal</th>
                   <th colSpan="2">Conferência</th>
@@ -1145,7 +1166,9 @@ function Conference({ data }) {
                   <th className="select-cell"><input type="checkbox" aria-label="Selecionar todas as notas visíveis" checked={allVisibleSelected} onChange={toggleAll} /></th>
                   <th>Data</th>
                   <th>Produtor</th>
+                  <th>Fazenda</th>
                   <th>Participante</th>
+                  <th>Documento</th>
                   <th>Nº da nota</th>
                   <th>Valor</th>
                   <th>Tipo</th>
@@ -1158,7 +1181,9 @@ function Conference({ data }) {
                   <th className="select-cell filter-marker" title="Filtros da grade"><Filter aria-hidden="true" /></th>
                   <th><input type="date" aria-label="Filtrar por data" value={columnFilters.issue_date} onChange={(e) => setColumnFilter("issue_date", e.target.value)} /></th>
                   <th><select aria-label="Filtrar por produtor" value={columnFilters.producer_id} onChange={(e) => setColumnFilter("producer_id", e.target.value)}><option value="">Todos</option>{data.producers.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}</select></th>
+                  <th><select aria-label="Filtrar por fazenda" value={columnFilters.farm_id} onChange={(e) => setColumnFilter("farm_id", e.target.value)}><option value="">Todas</option><option value="unreported">Não informada</option>{data.farms.map((f) => <option value={f.id} key={f.id}>{f.name} — IE {maskIe(f.state_registration)}</option>)}</select></th>
                   <th><select aria-label="Filtrar por participante" value={columnFilters.participant_id} onChange={(e) => setColumnFilter("participant_id", e.target.value)}><option value="">Todos</option><option value="unreported">Não informado</option>{data.participants.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}</select></th>
+                  <th><select aria-label="Filtrar por tipo de documento" value={columnFilters.document_type} onChange={(e) => setColumnFilter("document_type", e.target.value)}><option value="">Todos</option><option value="invoice">Nota fiscal</option><option value="payroll">Folha de pagamento</option><option value="contract">Contrato</option></select></th>
                   <th><input aria-label="Filtrar por número da nota" placeholder="Buscar..." value={columnFilters.invoice_number} onChange={(e) => setColumnFilter("invoice_number", e.target.value)} /></th>
                   <th><input aria-label="Filtrar por valor" inputMode="decimal" placeholder="Buscar..." value={columnFilters.amount} onChange={(e) => setColumnFilter("amount", e.target.value)} /></th>
                   <th><select aria-label="Filtrar por tipo" value={columnFilters.operation_type} onChange={(e) => setColumnFilter("operation_type", e.target.value)}><option value="">Todos</option><option value="incoming">Entrada</option><option value="outgoing">Saída</option></select></th>
@@ -1194,8 +1219,10 @@ function Conference({ data }) {
                         ))}
                       </select>
                     </td>
-                    <td>
+                    <td>{r.farm_name || "Não informada"}</td>
+                    <td className="conference-participant" title={r.participant_name || "Não informado"}>
                       <select
+                        aria-label="Participante"
                         value={r.participant_id || ""}
                         onChange={(e) =>
                           update(
@@ -1213,6 +1240,7 @@ function Conference({ data }) {
                         ))}
                       </select>
                     </td>
+                    <td className="conference-document-type">{({ invoice: "Nota fiscal", payroll: "Folha de pagamento", contract: "Contrato" })[r.document_type || "invoice"]}</td>
                     <td>
                       <input
                         value={r.invoice_number || ""}
@@ -1259,7 +1287,7 @@ function Conference({ data }) {
                     </td>
                   </tr>
                 ))}
-                {!filteredRows.length && <tr className="conference-no-results"><td colSpan="11">Nenhuma nota corresponde aos filtros das colunas.</td></tr>}
+                {!filteredRows.length && <tr className="conference-no-results"><td colSpan="13">Nenhum lançamento corresponde aos filtros das colunas.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1273,19 +1301,20 @@ function Conference({ data }) {
         <div className="balance"><small>Saldo (saídas − entradas)</small><strong>{money.format(totals.outgoing - totals.incoming)}</strong></div>
       </div>}
       {pendingDelete && <ConfirmDialog title={pendingDelete.kind === "bulk" ? "Excluir notas selecionadas" : "Excluir nota"} message={pendingDelete.kind === "bulk" ? `Deseja excluir permanentemente ${selected.length} nota(s) selecionada(s)?` : `Deseja excluir a nota ${pendingDelete.number || pendingDelete.id}? Essa ação não poderá ser desfeita.`} close={() => setPendingDelete(null)} confirm={() => pendingDelete.kind === "bulk" ? removeSelected() : remove(pendingDelete.id)} loading={bulkBusy} />}
-      {showManual && <Modal title="Lançar nota manualmente" close={() => setShowManual(false)}>
+      {showManual && <Modal title="Lançamento manual" close={() => setShowManual(false)}>
         <form className="modal-form manual-invoice-form" onSubmit={createManual}>
+          <label>Tipo do arquivo<select required value={manual.document_type} onChange={(e) => setManual({ ...manual, document_type: e.target.value, ncm_category: e.target.value === "invoice" ? manual.ncm_category : "other", cattle_quantity: "" })}><option value="invoice">Nota fiscal</option><option value="payroll">Folha de pagamento</option><option value="contract">Contrato</option></select></label>
           <label>Produtor<select required value={manual.producer_id} onChange={(e) => setManual({ ...manual, producer_id: e.target.value, farm_id: "" })}><option value="" disabled>Selecione o produtor</option>{data.producers.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}</select></label>
           <label>Fazenda<select value={manual.farm_id} disabled={!manual.producer_id} onChange={(e) => setManual({ ...manual, farm_id: e.target.value })}><option value="">Não informada</option>{data.farms.filter((f) => String(f.producer_id) === String(manual.producer_id)).map((f) => <option value={f.id} key={f.id}>{f.name}</option>)}</select></label>
           <label>Participante<select value={manual.participant_id} onChange={(e) => setManual({ ...manual, participant_id: e.target.value })}><option value="">Não informado</option>{data.participants.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}</select></label>
           <label>Data de emissão<input type="date" required value={manual.issue_date} onChange={(e) => setManual({ ...manual, issue_date: e.target.value })} /></label>
-          <label>Número da nota<input required value={manual.invoice_number} onChange={(e) => setManual({ ...manual, invoice_number: e.target.value })} /></label>
+          <label>Número/identificação do documento<input required value={manual.invoice_number} onChange={(e) => setManual({ ...manual, invoice_number: e.target.value })} /></label>
           <label>Valor<CurrencyInput value={manual.amount} onValue={(amount) => setManual({ ...manual, amount })} /></label>
           <label>Tipo<select value={manual.operation_type} onChange={(e) => setManual({ ...manual, operation_type: e.target.value })}><option value="incoming">Entrada</option><option value="outgoing">Saída</option></select></label>
-          <label>Classificação<select value={manual.ncm_category} onChange={(e) => setManual({ ...manual, ncm_category: e.target.value, cattle_quantity: e.target.value === "cattle" ? manual.cattle_quantity : "" })}><option value="cattle">Gado</option><option value="soy">Soja</option><option value="other">Outros</option></select></label>
-          {manual.ncm_category === "cattle" && <label>Quantidade de gado<input type="number" min="0" step="1" required value={manual.cattle_quantity} onChange={(e) => setManual({ ...manual, cattle_quantity: e.target.value })} /></label>}
+          {manual.document_type === "invoice" && <label>Classificação<select value={manual.ncm_category} onChange={(e) => setManual({ ...manual, ncm_category: e.target.value, cattle_quantity: e.target.value === "cattle" ? manual.cattle_quantity : "" })}><option value="cattle">Gado</option><option value="soy">Soja</option><option value="other">Outros</option></select></label>}
+          {manual.document_type === "invoice" && manual.ncm_category === "cattle" && <label>Quantidade de gado<input type="number" min="0" step="1" required value={manual.cattle_quantity} onChange={(e) => setManual({ ...manual, cattle_quantity: e.target.value })} /></label>}
           {manualError && <div className="error">{manualError}</div>}
-          <div className="actions"><button type="button" onClick={() => setShowManual(false)}>Cancelar</button><button className="primary" disabled={manualBusy}>{manualBusy ? "Salvando..." : "Salvar nota"}</button></div>
+          <div className="actions"><button type="button" onClick={() => setShowManual(false)}>Cancelar</button><button className="primary" disabled={manualBusy}>{manualBusy ? "Salvando..." : "Salvar lançamento"}</button></div>
         </form>
       </Modal>}
     </>

@@ -75,6 +75,20 @@ if (!invoiceColumns.has('cattle_quantity')) db.exec('ALTER TABLE invoices ADD CO
 if (!invoiceColumns.has('content_hash')) db.exec('ALTER TABLE invoices ADD COLUMN content_hash TEXT')
 if (!invoiceColumns.has('is_reviewed')) db.exec('ALTER TABLE invoices ADD COLUMN is_reviewed INTEGER NOT NULL DEFAULT 0')
 if (!invoiceColumns.has('is_manual')) db.exec('ALTER TABLE invoices ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0')
+if (!invoiceColumns.has('document_type')) db.exec("ALTER TABLE invoices ADD COLUMN document_type TEXT NOT NULL DEFAULT 'invoice'")
+if (!invoiceColumns.has('producer_state_registration')) db.exec('ALTER TABLE invoices ADD COLUMN producer_state_registration TEXT')
+// Mantém a regra mesmo em bases antigas que já possam conter inscrições repetidas.
+// Diferente de um índice UNIQUE, os gatilhos podem ser criados sem apagar dados legados.
+db.exec(`
+CREATE TRIGGER IF NOT EXISTS farms_state_registration_unique_insert
+BEFORE INSERT ON farms
+WHEN EXISTS (SELECT 1 FROM farms WHERE state_registration = NEW.state_registration)
+BEGIN SELECT RAISE(ABORT, 'duplicate farm state registration'); END;
+CREATE TRIGGER IF NOT EXISTS farms_state_registration_unique_update
+BEFORE UPDATE OF state_registration ON farms
+WHEN EXISTS (SELECT 1 FROM farms WHERE state_registration = NEW.state_registration AND id <> NEW.id)
+BEGIN SELECT RAISE(ABORT, 'duplicate farm state registration'); END;
+`)
 const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name))
 if (!userColumns.has('is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0')
 if (!db.prepare('SELECT COUNT(*) total FROM users WHERE is_admin=1').get().total) {

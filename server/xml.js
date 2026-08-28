@@ -25,6 +25,8 @@ export function parseInvoiceXml(xml) {
   const ncmCodes = [...new Set(details.map(detail => String(first(detail?.prod?.NCM) || '').replace(/\D/g, '')).filter(Boolean))]
   const issuerDocument = String(first(issuer.CPF) || first(issuer.CNPJ) || '').replace(/\D/g, '')
   const recipientDocument = String(first(recipient.CPF) || first(recipient.CNPJ) || '').replace(/\D/g, '')
+  const issuerStateRegistration = String(first(issuer.IE) || '').replace(/\D/g, '')
+  const recipientStateRegistration = String(first(recipient.IE) || '').replace(/\D/g, '')
   return {
     issueDate: rawDate ? String(rawDate).slice(0, 10) : null,
     invoiceNumber: ide.nNF != null ? String(ide.nNF) : '',
@@ -34,6 +36,8 @@ export function parseInvoiceXml(xml) {
     recipientName: first(recipient.xNome) || '',
     issuerDocument,
     recipientDocument,
+    issuerStateRegistration,
+    recipientStateRegistration,
     issuerAddress: {
       street: first(issuerAddress.xLgr) || '', number: first(issuerAddress.nro) || '',
       complement: first(issuerAddress.xCpl) || '', neighborhood: first(issuerAddress.xBairro) || '',

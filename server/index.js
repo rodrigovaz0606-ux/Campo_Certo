@@ -13,7 +13,7 @@ import { parseInvoiceXml } from './xml.js'
 const app = express()
 const port = Number(process.env.PORT || 3333)
 const secret = process.env.JWT_SECRET || 'desenvolvimento-local-troque-em-producao'
-const upload = multer({ storage: multer.memoryStorage(), limits: { files: 300, fileSize: 10 * 1024 * 1024 } })
+const upload = multer({ storage: multer.memoryStorage(), limits: { files: 250, fileSize: 10 * 1024 * 1024 } })
 app.use(cors())
 app.use(express.json({ limit: '2mb' }))
 
@@ -45,17 +45,19 @@ const participantFromXml = (document, name) => {
   return Number(insertParticipantFromXml.run(cleanText(name) || `Participante ${normalizedDocument}`, normalizedDocument).lastInsertRowid)
 }
 const invoiceParties = (parsed, producerDocument) => {
-  if (parsed.issuerDocument === producerDocument) return { operationType: 'outgoing', participantDocument: parsed.recipientDocument, participantName: parsed.recipientName }
-  if (parsed.recipientDocument === producerDocument) return { operationType: 'incoming', participantDocument: parsed.issuerDocument, participantName: parsed.issuerName }
+  if (parsed.issuerDocument === producerDocument) return { operationType: 'outgoing', participantDocument: parsed.recipientDocument, participantName: parsed.recipientName, producerStateRegistration: parsed.issuerStateRegistration }
+  if (parsed.recipientDocument === producerDocument) return { operationType: 'incoming', participantDocument: parsed.issuerDocument, participantName: parsed.issuerName, producerStateRegistration: parsed.recipientStateRegistration }
   return null
 }
 
 const reconcileInvoiceCpf = db.transaction(() => {
-  const invoices = db.prepare('SELECT i.id,i.xml_content,i.operation_type,i.ncm_category,i.participant_id,p.cpf FROM invoices i JOIN producers p ON p.id=i.producer_id WHERE i.is_manual=0').all()
+  const invoices = db.prepare('SELECT i.id,i.producer_id,i.farm_id,i.xml_content,i.operation_type,i.ncm_category,i.participant_id,i.producer_state_registration,p.cpf FROM invoices i JOIN producers p ON p.id=i.producer_id WHERE i.is_manual=0').all()
   const remove = db.prepare('DELETE FROM invoices WHERE id=?')
   const updateType = db.prepare('UPDATE invoices SET operation_type=? WHERE id=?')
   const updateNcm = db.prepare('UPDATE invoices SET ncm_codes=?,ncm_category=? WHERE id=?')
   const updateParticipant = db.prepare('UPDATE invoices SET participant_id=? WHERE id=?')
+  const updateRegistrationAndFarm = db.prepare('UPDATE invoices SET producer_state_registration=?,farm_id=? WHERE id=?')
+  const findFarmByRegistration = db.prepare('SELECT id FROM farms WHERE producer_id=? AND state_registration=? ORDER BY id LIMIT 1')
   let removed = 0
   for (const invoice of invoices) {
     try {
@@ -63,6 +65,10 @@ const reconcileInvoiceCpf = db.transaction(() => {
       if (!invoice.ncm_category) updateNcm.run(parsed.ncmCodes.join(', '), parsed.ncmCategory, invoice.id)
       const parties = invoiceParties(parsed, invoice.cpf)
       if (parties) {
+        const registration = cleanDocument(parties.producerStateRegistration)
+        const inferredFarm = registration ? findFarmByRegistration.get(invoice.producer_id, registration) : null
+        const correctFarmId = inferredFarm?.id || invoice.farm_id || null
+        if (registration && (invoice.producer_state_registration !== registration || invoice.farm_id !== correctFarmId)) updateRegistrationAndFarm.run(registration, correctFarmId, invoice.id)
         if (!['incoming','outgoing'].includes(invoice.operation_type)) updateType.run(parties.operationType, invoice.id)
         if (!invoice.participant_id) {
           const participantId = participantFromXml(parties.participantDocument, parties.participantName)
@@ -149,12 +155,14 @@ app.get('/api/producers', (req, res) => res.json(db.prepare('SELECT * FROM produ
 app.post('/api/producers', (req, res) => {
   const { name, cpf } = req.body; const doc = cleanDocument(cpf); const a = addressValues(req.body)
   if (!name || doc.length !== 11 || !a.address || !a.addressNumber || a.zipCode.length !== 8 || !a.neighborhood) return res.status(400).json({ error: 'Preencha nome, CPF válido, endereço, número, CEP e bairro.' })
+  if (db.prepare('SELECT id FROM producers WHERE cpf=?').get(doc)) return res.status(409).json({ error: 'Já existe um produtor cadastrado com este CPF.' })
   const info = db.prepare('INSERT INTO producers (name,cpf,address,address_number,block,lot,zip_code,neighborhood,complement) VALUES (?,?,?,?,?,?,?,?,?)').run(name.trim(),doc,a.address,a.addressNumber,a.block,a.lot,a.zipCode,a.neighborhood,a.complement)
   res.status(201).json(db.prepare('SELECT * FROM producers WHERE id=?').get(info.lastInsertRowid))
 })
 app.put('/api/producers/:id', (req, res) => {
   const name = cleanText(req.body.name); const doc = cleanDocument(req.body.cpf); const a = addressValues(req.body)
   if (!name || doc.length !== 11 || !a.address || !a.addressNumber || a.zipCode.length !== 8 || !a.neighborhood) return res.status(400).json({ error: 'Preencha nome, CPF válido, endereço, número, CEP e bairro.' })
+  if (db.prepare('SELECT id FROM producers WHERE cpf=? AND id<>?').get(doc, req.params.id)) return res.status(409).json({ error: 'Já existe um produtor cadastrado com este CPF.' })
   const info = db.prepare('UPDATE producers SET name=?,cpf=?,address=?,address_number=?,block=?,lot=?,zip_code=?,neighborhood=?,complement=? WHERE id=?').run(name,doc,a.address,a.addressNumber,a.block,a.lot,a.zipCode,a.neighborhood,a.complement,req.params.id)
   if (!info.changes) return res.status(404).json({ error: 'Produtor não encontrado.' })
   res.json(db.prepare('SELECT * FROM producers WHERE id=?').get(req.params.id))
@@ -173,6 +181,7 @@ app.post('/api/farms', (req, res) => {
   let partners = []
   try { partners = Array.isArray(req.body.partners) ? req.body.partners : JSON.parse(req.body.partners || '[]') } catch { return res.status(400).json({ error: 'Os dados dos sócios são inválidos.' }) }
   if (!producer_id || !name || stateRegistration.length < 8 || stateRegistration.length > 14 || !a.address || !a.addressNumber || a.zipCode.length !== 8 || !a.neighborhood || !['unique','shared'].includes(ownership_type)) return res.status(400).json({ error: 'Preencha os dados obrigatórios da fazenda. A Inscrição Estadual deve ter de 8 a 14 números e o CEP, 8.' })
+  if (db.prepare('SELECT id FROM farms WHERE state_registration=?').get(stateRegistration)) return res.status(409).json({ error: 'Já existe uma fazenda cadastrada com esta Inscrição Estadual.' })
   if (ownership_type === 'shared') {
     if (!partners.length) return res.status(400).json({ error: 'Adicione ao menos um sócio com CPF e participação.' })
     partners = partners.map(p => ({ document: cleanDocument(p.document), share: Number(p.share) }))
@@ -195,6 +204,7 @@ app.put('/api/farms/:id', (req, res) => {
   let partners = []
   try { partners = Array.isArray(req.body.partners) ? req.body.partners : JSON.parse(req.body.partners || '[]') } catch { return res.status(400).json({ error: 'Os dados dos sócios são inválidos.' }) }
   if (!producer_id || !name || stateRegistration.length < 8 || stateRegistration.length > 14 || !a.address || !a.addressNumber || a.zipCode.length !== 8 || !a.neighborhood || !['unique','shared'].includes(ownership_type)) return res.status(400).json({ error: 'Preencha os dados obrigatórios da fazenda. A Inscrição Estadual deve ter de 8 a 14 números e o CEP, 8.' })
+  if (db.prepare('SELECT id FROM farms WHERE state_registration=? AND id<>?').get(stateRegistration, req.params.id)) return res.status(409).json({ error: 'Já existe uma fazenda cadastrada com esta Inscrição Estadual.' })
   if (!db.prepare('SELECT id FROM producers WHERE id=?').get(producer_id)) return res.status(400).json({ error: 'Selecione um produtor válido.' })
   if (ownership_type === 'shared') {
     if (!partners.length) return res.status(400).json({ error: 'Adicione ao menos um sócio com CPF e participação.' })
@@ -238,12 +248,13 @@ app.post('/api/invoices/import', upload.array('files'), (req, res) => {
   if (!producer) return res.status(400).json({ error: 'Selecione um produtor válido.' })
   if (farmId && !db.prepare('SELECT id FROM farms WHERE id=? AND producer_id=?').get(farmId, producerId)) return res.status(400).json({ error: 'A fazenda selecionada não pertence ao produtor.' })
   if (!req.files?.length) return res.status(400).json({ error: 'Selecione ao menos um arquivo XML.' })
-  const insert = db.prepare(`INSERT INTO invoices (producer_id,farm_id,participant_id,issue_date,invoice_number,amount,access_key,issuer_name,original_filename,xml_content,operation_type,ncm_codes,ncm_category,content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+  const insert = db.prepare(`INSERT INTO invoices (producer_id,farm_id,participant_id,issue_date,invoice_number,amount,access_key,issuer_name,original_filename,xml_content,operation_type,ncm_codes,ncm_category,content_hash,producer_state_registration) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+  const findFarmByRegistration = db.prepare('SELECT id FROM farms WHERE producer_id=? AND state_registration=? ORDER BY id LIMIT 1')
   const findByAccessKey = db.prepare("SELECT id FROM invoices WHERE access_key=? AND access_key<>'' LIMIT 1")
   const findByContentHash = db.prepare('SELECT id FROM invoices WHERE content_hash=? LIMIT 1')
   const result = { imported: 0, duplicates: 0, errors: [] }
   const transaction = db.transaction(files => files.forEach(file => {
-    try { const xml=file.buffer.toString('utf8'); const n=parseInvoiceXml(xml); const contentHash=crypto.createHash('sha256').update(xml.replace(/\s+/g, '')).digest('hex'); const duplicate=(n.accessKey&&findByAccessKey.get(n.accessKey))||findByContentHash.get(contentHash); if(duplicate){result.duplicates++;return} const parties=invoiceParties(n,producer.cpf); if (!parties) { result.errors.push(`${file.originalname}: o CPF do XML não corresponde ao emitente nem ao destinatário selecionado`); return } const participantId=participantFromXml(parties.participantDocument,parties.participantName); insert.run(producerId,farmId,participantId,n.issueDate,n.invoiceNumber,n.amount,n.accessKey,n.issuerName,file.originalname,xml,parties.operationType,n.ncmCodes.join(', '),n.ncmCategory,contentHash); result.imported++ }
+    try { const xml=file.buffer.toString('utf8'); const n=parseInvoiceXml(xml); const contentHash=crypto.createHash('sha256').update(xml.replace(/\s+/g, '')).digest('hex'); const duplicate=(n.accessKey&&findByAccessKey.get(n.accessKey))||findByContentHash.get(contentHash); if(duplicate){result.duplicates++;return} const parties=invoiceParties(n,producer.cpf); if (!parties) { result.errors.push(`${file.originalname}: o CPF do XML não corresponde ao emitente nem ao destinatário selecionado`); return } const registration=cleanDocument(parties.producerStateRegistration); const inferredFarm=registration&&findFarmByRegistration.get(producerId,registration); const participantId=participantFromXml(parties.participantDocument,parties.participantName); insert.run(producerId,inferredFarm?.id||farmId,participantId,n.issueDate,n.invoiceNumber,n.amount,n.accessKey,n.issuerName,file.originalname,xml,parties.operationType,n.ncmCodes.join(', '),n.ncmCategory,contentHash,registration||null); result.imported++ }
     catch { result.errors.push(`${file.originalname}: XML inválido`) }
   }))
   transaction(req.files); res.status(201).json(result)
@@ -257,28 +268,35 @@ app.post('/api/invoices/manual', (req, res) => {
   const amount = Number(req.body.amount)
   const operationType = req.body.operation_type
   const ncmCategory = req.body.ncm_category
+  const documentType = req.body.document_type || 'invoice'
   const cattleQuantity = ncmCategory === 'cattle' && req.body.cattle_quantity !== '' && req.body.cattle_quantity != null ? Number(req.body.cattle_quantity) : null
   if (!db.prepare('SELECT id FROM producers WHERE id=?').get(producerId)) return res.status(400).json({ error: 'Selecione um produtor válido.' })
   if (farmId && !db.prepare('SELECT id FROM farms WHERE id=? AND producer_id=?').get(farmId, producerId)) return res.status(400).json({ error: 'A fazenda selecionada não pertence ao produtor.' })
   if (participantId && !db.prepare('SELECT id FROM participants WHERE id=?').get(participantId)) return res.status(400).json({ error: 'Selecione um participante válido.' })
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate) || !invoiceNumber) return res.status(400).json({ error: 'Informe a data e o número da nota.' })
-  if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'Informe um valor válido para a nota.' })
-  if (!['incoming','outgoing'].includes(operationType)) return res.status(400).json({ error: 'Selecione Entrada ou Saída para a nota.' })
-  if (!['cattle','soy','other'].includes(ncmCategory)) return res.status(400).json({ error: 'Selecione uma classificação NCM válida.' })
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate) || !invoiceNumber) return res.status(400).json({ error: 'Informe a data e o número/identificação do documento.' })
+  if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'Informe um valor válido para o lançamento.' })
+  if (!['incoming','outgoing'].includes(operationType)) return res.status(400).json({ error: 'Selecione Entrada ou Saída para o lançamento.' })
+  if (!['invoice','payroll','contract'].includes(documentType)) return res.status(400).json({ error: 'Selecione um tipo de arquivo válido.' })
+  if (!['cattle','soy','other'].includes(ncmCategory)) return res.status(400).json({ error: 'Selecione uma classificação válida.' })
   if (cattleQuantity != null && (!Number.isInteger(cattleQuantity) || cattleQuantity < 0)) return res.status(400).json({ error: 'A quantidade de gado deve ser um número inteiro igual ou maior que zero.' })
-  const filename = `lancamento-manual-${invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '-')}.xml`
-  const info = db.prepare(`INSERT INTO invoices (producer_id,farm_id,participant_id,issue_date,invoice_number,amount,original_filename,xml_content,operation_type,ncm_category,cattle_quantity,is_reviewed,is_manual) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)`).run(producerId,farmId,participantId,issueDate,invoiceNumber,amount,filename,'',operationType,ncmCategory,cattleQuantity,1)
+  const normalizedCategory = documentType === 'invoice' ? ncmCategory : 'other'
+  const normalizedQuantity = documentType === 'invoice' ? cattleQuantity : null
+  const filename = `lancamento-manual-${invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+  const info = db.prepare(`INSERT INTO invoices (producer_id,farm_id,participant_id,issue_date,invoice_number,amount,original_filename,xml_content,operation_type,ncm_category,cattle_quantity,is_reviewed,is_manual,document_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?)`).run(producerId,farmId,participantId,issueDate,invoiceNumber,amount,filename,'',operationType,normalizedCategory,normalizedQuantity,1,documentType)
   res.status(201).json({ id: info.lastInsertRowid })
 })
 app.get('/api/invoices', (req, res) => {
   if (!req.query.producer_id) return res.json([])
   const filters=[]; const params=[]
   if (req.query.producer_id) { filters.push('i.producer_id=?'); params.push(req.query.producer_id) }
-  if (req.query.farm_id) { filters.push('i.farm_id=?'); params.push(req.query.farm_id) }
+  if (req.query.farm_id) {
+    filters.push(`((i.is_manual=0 AND COALESCE(i.producer_state_registration,'')<>'' AND i.producer_state_registration=(SELECT state_registration FROM farms WHERE id=? AND producer_id=i.producer_id)) OR ((i.is_manual=1 OR COALESCE(i.producer_state_registration,'')='') AND i.farm_id=?))`)
+    params.push(req.query.farm_id, req.query.farm_id)
+  }
   if (req.query.year) { filters.push("strftime('%Y',i.issue_date)=?"); params.push(String(req.query.year)) }
   if (req.query.month) { filters.push("strftime('%m',i.issue_date)=?"); params.push(String(req.query.month).padStart(2,'0')) }
   if (req.query.ncm_category) { filters.push('i.ncm_category=?'); params.push(req.query.ncm_category) }
-  res.json(db.prepare(`SELECT i.id,i.issue_date,i.invoice_number,i.amount,i.operation_type,i.ncm_codes,i.ncm_category,i.cattle_quantity,i.is_reviewed,i.is_manual,i.access_key,i.issuer_name,i.original_filename,i.producer_id,i.farm_id,i.participant_id,p.name producer_name,f.name farm_name,pt.name participant_name FROM invoices i JOIN producers p ON p.id=i.producer_id LEFT JOIN farms f ON f.id=i.farm_id LEFT JOIN participants pt ON pt.id=i.participant_id ${filters.length?'WHERE '+filters.join(' AND '):''} ORDER BY COALESCE(i.issue_date,i.created_at) DESC`).all(...params))
+  res.json(db.prepare(`SELECT i.id,i.issue_date,i.invoice_number,i.amount,i.operation_type,i.ncm_codes,i.ncm_category,i.cattle_quantity,i.is_reviewed,i.is_manual,i.document_type,i.access_key,i.issuer_name,i.original_filename,i.producer_id,i.farm_id,i.participant_id,p.name producer_name,f.name farm_name,pt.name participant_name FROM invoices i JOIN producers p ON p.id=i.producer_id LEFT JOIN farms f ON f.id=i.farm_id LEFT JOIN participants pt ON pt.id=i.participant_id ${filters.length?'WHERE '+filters.join(' AND '):''} ORDER BY COALESCE(i.issue_date,i.created_at) DESC`).all(...params))
 })
 app.get('/api/invoice-years', (req, res) => res.json(db.prepare("SELECT DISTINCT strftime('%Y',issue_date) year FROM invoices WHERE issue_date IS NOT NULL ORDER BY year DESC").all().map(row => row.year)))
 app.get('/api/annual-summary', (req, res) => {
@@ -389,6 +407,8 @@ if (fs.existsSync(distDir)) {
 
 app.use((err, req, res, next) => {
   console.error(err)
+  if (err.code === 'LIMIT_FILE_COUNT') return res.status(413).json({ error: 'Este lote tem arquivos demais. Envie no máximo 250 arquivos por requisição.' })
+  if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Um dos arquivos ultrapassa o limite de 10 MB.' })
   if (err.code?.startsWith('SQLITE_CONSTRAINT')) return res.status(409).json({ error: 'Já existe um cadastro com esse CPF, CNPJ, e-mail ou inscrição.' })
   res.status(500).json({ error: 'Não foi possível concluir a operação.' })
 })
