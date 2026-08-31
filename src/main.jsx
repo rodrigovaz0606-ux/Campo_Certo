@@ -17,6 +17,8 @@ import {
   CheckCircle2,
   X,
   Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   Download,
   Eye,
   BarChart3,
@@ -259,6 +261,16 @@ function Shell({ user, onLogout, theme, onThemeToggle }) {
             <Sprout />
           </span>
           <b>Campo Certo</b>
+          <button
+            className="sidebar-toggle"
+            type="button"
+            onClick={toggleSidebar}
+            title={sidebarCollapsed ? "Expandir barra lateral" : "Minimizar barra lateral"}
+            aria-label={sidebarCollapsed ? "Expandir barra lateral" : "Minimizar barra lateral"}
+            aria-expanded={!sidebarCollapsed}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+          </button>
           <button className="close" onClick={() => setOpen(false)}>
             <X />
           </button>
@@ -296,12 +308,11 @@ function Shell({ user, onLogout, theme, onThemeToggle }) {
             className="menu"
             type="button"
             onClick={() => {
-              if (window.matchMedia("(max-width: 720px)").matches) setOpen(true);
-              else toggleSidebar();
+              setOpen(true);
             }}
-            title={sidebarCollapsed ? "Expandir barra lateral" : "Minimizar barra lateral"}
-            aria-label={sidebarCollapsed ? "Expandir barra lateral" : "Minimizar barra lateral"}
-            aria-expanded={!sidebarCollapsed}
+            title="Abrir menu"
+            aria-label="Abrir menu"
+            aria-expanded={open}
           >
             <Menu />
           </button>
@@ -1015,7 +1026,17 @@ function Conference({ data }) {
       row.ncm_category === "cattle" ? row.cattle_quantity || "" : "",
       row.is_reviewed ? "Sim" : "Não",
     ]);
-    const csv = ["sep=;", header.map(safeCell).join(";"), ...lines.map(line => line.map(safeCell).join(";"))].join("\r\n");
+    const balanceLine = [
+      "Saldo total (saídas - entradas)", "", "", "", "", "",
+      (totals.outgoing - totals.incoming).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      "", "", "", "",
+    ];
+    const csv = [
+      "sep=;",
+      header.map(safeCell).join(";"),
+      ...lines.map(line => line.map(safeCell).join(";")),
+      balanceLine.map(safeCell).join(";"),
+    ].join("\r\n");
     const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
     const producerName = data.producers.find(item => String(item.id) === producer)?.name || "produtor";
     const safeName = producerName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
