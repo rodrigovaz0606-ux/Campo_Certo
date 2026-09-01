@@ -386,7 +386,8 @@ app.put('/api/invoices/:id', (req, res) => {
   const cattleQuantity = ncm_category === 'cattle' && req.body.cattle_quantity !== '' && req.body.cattle_quantity != null ? Number(req.body.cattle_quantity) : null
   if (cattleQuantity != null && (!Number.isInteger(cattleQuantity) || cattleQuantity < 0)) return res.status(400).json({ error: 'A quantidade de gado deve ser um número inteiro igual ou maior que zero.' })
   const operationType = operation_type
-  db.prepare('UPDATE invoices SET issue_date=?,producer_id=?,farm_id=?,participant_id=?,invoice_number=?,amount=?,operation_type=?,ncm_category=?,cattle_quantity=?,is_reviewed=1 WHERE id=?').run(issue_date||null,producer_id,farm_id||null,participant_id||null,invoice_number,Number(amount)||0,operationType,ncm_category,cattleQuantity,req.params.id)
+  const isReviewed = req.body.is_reviewed === 0 || req.body.is_reviewed === false ? 0 : 1
+  db.prepare('UPDATE invoices SET issue_date=?,producer_id=?,farm_id=?,participant_id=?,invoice_number=?,amount=?,operation_type=?,ncm_category=?,cattle_quantity=?,is_reviewed=? WHERE id=?').run(issue_date||null,producer_id,farm_id||null,participant_id||null,invoice_number,Number(amount)||0,operationType,ncm_category,cattleQuantity,isReviewed,req.params.id)
   res.json({ ok: true })
 })
 app.get('/api/invoices/:id/xml', (req, res) => { const row=db.prepare('SELECT original_filename,xml_content,is_manual FROM invoices WHERE id=?').get(req.params.id); if(!row)return res.status(404).end(); if(row.is_manual)return res.status(409).json({ error: 'Lançamentos manuais não possuem XML.' }); res.type('application/xml').attachment(row.original_filename).send(row.xml_content) })
