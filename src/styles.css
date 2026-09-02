@@ -132,6 +132,8 @@
 .conference .table-wrap::-webkit-scrollbar-track{background:#edf1ee}
 .conference .table-wrap::-webkit-scrollbar-thumb{background:#7f9185;border:3px solid #edf1ee;border-radius:999px}
 .conference .table-wrap::-webkit-scrollbar-thumb:hover{background:#5f7466}
+.conference-pagination{position:sticky;left:0;width:100%;min-width:min(100%,1450px);display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 14px;background:#f5f8f5;border-top:1px solid #cfd8d1;color:#65736a;font-size:12px}.conference-pagination>div{display:flex;align-items:center;gap:10px}.conference-pagination button{border:1px solid #b9c8bd;border-radius:6px;background:#fff;color:var(--green);padding:6px 10px;font-weight:600}.conference-pagination button:disabled{opacity:.45;cursor:default}.conference-pagination b{color:#35483c}
+:root[data-theme="dark"] .conference-pagination{background:#17251d;border-color:#304037;color:#a5b3aa}:root[data-theme="dark"] .conference-pagination button{background:#1d2d24;border-color:#3b5044;color:#a9d3b7}:root[data-theme="dark"] .conference-pagination b{color:#dce6e0}
 :root[data-theme="dark"] .cattle-summary-number{border-color:#33483b}:root[data-theme="dark"] .cattle-summary-number strong{color:#72ca91}
 :root[data-theme="dark"] .annual-table{border-color:#35463c}:root[data-theme="dark"] .annual-table th,:root[data-theme="dark"] .annual-table td{border-color:#304037}
 :root[data-theme="dark"] input[type="checkbox"]{background:#111914;accent-color:#3aa56c}

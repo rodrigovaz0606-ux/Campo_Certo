@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
-import JSZip from "jszip";
 import {
   Sprout,
   LayoutDashboard,
@@ -32,7 +31,6 @@ import {
 import "./styles.css";
 import "./partners.css";
 import "./export.css";
-import { exportDanfePdf, exportMultipleDanfePdf, renderDanfePreview } from "./danfe.js";
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -919,7 +917,7 @@ function ExportMenu({ row }) {
   };
   const downloadDanfe = async () => {
     setBusy(true); setError("");
-    try { const response = await invoiceXml(row); await exportDanfePdf(await response.text()); }
+    try { const response = await invoiceXml(row); const { exportDanfePdf } = await import("./danfe.js"); await exportDanfePdf(await response.text()); }
     catch (e) { setError(e.message); }
     finally { setBusy(false); }
   };
@@ -935,7 +933,13 @@ function ExportMenu({ row }) {
 
 function DanfePreview({ xml, close }) {
   const content = useRef(null);
-  useEffect(() => { if (content.current) renderDanfePreview(content.current, xml); }, [xml]);
+  useEffect(() => {
+    let active = true;
+    import("./danfe.js").then(({ renderDanfePreview }) => {
+      if (active && content.current) renderDanfePreview(content.current, xml);
+    });
+    return () => { active = false; };
+  }, [xml]);
   useEffect(() => {
     const onKeyDown = event => event.key === "Escape" && close();
     window.addEventListener("keydown", onKeyDown);
@@ -949,6 +953,28 @@ function DanfePreview({ xml, close }) {
   </div>, document.body);
 }
 
+function ParticipantPicker({ participantId, participantName, choices, labelsById, onChoose }) {
+  const currentLabel = labelsById.get(Number(participantId)) || participantName || "";
+  const [value, setValue] = useState(currentLabel);
+  useEffect(() => setValue(currentLabel), [currentLabel]);
+  return <input
+    list="conference-participant-options"
+    aria-label="Participante"
+    placeholder="Não informado"
+    value={value}
+    onChange={(event) => {
+      const next = event.target.value;
+      setValue(next);
+      if (!next) onChoose(null, "");
+      else if (choices.has(next)) {
+        const participant = choices.get(next);
+        onChoose(participant.id, participant.name);
+      }
+    }}
+    onBlur={() => { if (value && !choices.has(value)) setValue(currentLabel); }}
+  />;
+}
+
 function Conference({ data }) {
   const loadSequence = useRef(0);
   const [producer, setProducer] = useState(""),
@@ -959,6 +985,7 @@ function Conference({ data }) {
     [month, setMonth] = useState(String(new Date().getMonth() + 1).padStart(2, "0")),
     [years, setYears] = useState([]),
     [rows, setRows] = useState([]),
+    [tablePage, setTablePage] = useState(1),
     [loading, setLoading] = useState(false),
     [selected, setSelected] = useState([]),
     [bulkBusy, setBulkBusy] = useState(false),
@@ -994,6 +1021,14 @@ function Conference({ data }) {
     sum[key] += Number(row.amount) || 0;
     return sum;
   }, { incoming: 0, outgoing: 0 }), [filteredRows]);
+  const rowsPerPage = 40;
+  const tablePages = Math.max(1, Math.ceil(filteredRows.length / rowsPerPage));
+  const visibleRows = useMemo(() => filteredRows.slice((tablePage - 1) * rowsPerPage, tablePage * rowsPerPage), [filteredRows, tablePage]);
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const participantLabelsById = useMemo(() => new Map(data.participants.map(item => [Number(item.id), `${item.name} — ${item.document}`])), [data.participants]);
+  const participantChoices = useMemo(() => new Map(data.participants.map(item => [`${item.name} — ${item.document}`, item])), [data.participants]);
+  useEffect(() => setTablePage(1), [producer, farm, ncmCategory, period, year, month, columnFilters]);
+  useEffect(() => { if (tablePage > tablePages) setTablePage(tablePages); }, [tablePage, tablePages]);
   const setColumnFilter = (key, value) => setColumnFilters(current => ({ ...current, [key]: value }));
   const hasColumnFilters = Object.values(columnFilters).some(Boolean);
   const clearColumnFilters = () => setColumnFilters({
@@ -1113,13 +1148,15 @@ function Conference({ data }) {
     });
   }, []);
   const update = (id, key, value) =>
-    setRows(rows.map((r) => (r.id === id ? { ...r, [key]: value, is_reviewed: 0 } : r)));
+    setRows(current => current.map((r) => (r.id === id ? { ...r, [key]: value, is_reviewed: 0 } : r)));
+  const updateParticipant = (id, participantId, participantName) =>
+    setRows(current => current.map(row => row.id === id ? { ...row, participant_id: participantId, participant_name: participantName, is_reviewed: 0 } : row));
   const save = async (row, isReviewed = 1) => {
-    await api("/invoices/" + row.id, {
+    const result = await api("/invoices/" + row.id, {
       method: "PUT",
       body: JSON.stringify({ ...row, is_reviewed: isReviewed }),
     });
-    load();
+    setRows(current => current.map(item => item.id === row.id ? { ...item, is_reviewed: result.is_reviewed } : item));
   };
   const openManual = () => {
     setManual({ producer_id: producer, farm_id: farm, participant_id: "", document_type: "invoice", issue_date: new Date().toISOString().slice(0, 10), invoice_number: "", amount: 0, operation_type: "outgoing", ncm_category: "other", cattle_quantity: "" });
@@ -1148,15 +1185,16 @@ function Conference({ data }) {
     load();
   };
   const toggle = (id) => setSelected(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]);
-  const allVisibleSelected = filteredRows.length > 0 && filteredRows.every(row => selected.includes(row.id));
+  const allVisibleSelected = filteredRows.length > 0 && filteredRows.every(row => selectedSet.has(row.id));
   const toggleAll = () => setSelected(current => allVisibleSelected
     ? current.filter(id => !filteredRows.some(row => row.id === id))
     : [...new Set([...current, ...filteredRows.map(row => row.id)])]);
   const exportSelected = async () => {
     setBulkBusy(true); setBulkError("");
     try {
+      const { default: JSZip } = await import("jszip");
       const zip = new JSZip();
-      const chosen = rows.filter(row => selected.includes(row.id) && !row.is_manual);
+      const chosen = rows.filter(row => selectedSet.has(row.id) && !row.is_manual);
       if (!chosen.length) throw new Error("Lançamentos manuais não possuem XML para exportação.");
       if (chosen.length !== selected.length) setBulkError("Os lançamentos manuais foram ignorados porque não possuem XML.");
       await Promise.all(chosen.map(async row => {
@@ -1173,10 +1211,11 @@ function Conference({ data }) {
   const exportSelectedPdf = async () => {
     setBulkBusy(true); setBulkError("");
     try {
-      const chosen = rows.filter(row => selected.includes(row.id) && !row.is_manual);
+      const chosen = rows.filter(row => selectedSet.has(row.id) && !row.is_manual);
       if (!chosen.length) throw new Error("Lançamentos manuais não possuem DANFE para exportação.");
       if (chosen.length !== selected.length) setBulkError("Os lançamentos manuais foram ignorados porque não possuem DANFE.");
       const xmls = await Promise.all(chosen.map(async row => (await invoiceXml(row)).text()));
+      const { exportMultipleDanfePdf } = await import("./danfe.js");
       await exportMultipleDanfePdf(xmls);
     } catch (error) { setBulkError(error.message); }
     finally { setBulkBusy(false); }
@@ -1276,6 +1315,9 @@ function Conference({ data }) {
           <Empty text="Carregando notas..." />
         ) : producer && rows.length ? (
           <div className="table-wrap export-table">
+            <datalist id="conference-participant-options">
+              {data.participants.map(item => <option value={`${item.name} — ${item.document}`} key={item.id} />)}
+            </datalist>
             <table>
               <thead>
                 <tr className="conference-groups">
@@ -1316,9 +1358,9 @@ function Conference({ data }) {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((r) => (
-                  <tr key={r.id} className={selected.includes(r.id) ? "is-selected" : ""}>
-                    <td className="select-cell"><input type="checkbox" aria-label={`Selecionar nota ${r.invoice_number || r.id}`} checked={selected.includes(r.id)} onChange={() => toggle(r.id)} /></td>
+                {visibleRows.map((r) => (
+                  <tr key={r.id} className={selectedSet.has(r.id) ? "is-selected" : ""}>
+                    <td className="select-cell"><input type="checkbox" aria-label={`Selecionar nota ${r.invoice_number || r.id}`} checked={selectedSet.has(r.id)} onChange={() => toggle(r.id)} /></td>
                     <td>
                       <input
                         type="date"
@@ -1344,24 +1386,7 @@ function Conference({ data }) {
                     </td>
                     <td>{r.farm_name || "Não informada"}</td>
                     <td className="conference-participant" title={r.participant_name || "Não informado"}>
-                      <select
-                        aria-label="Participante"
-                        value={r.participant_id || ""}
-                        onChange={(e) =>
-                          update(
-                            r.id,
-                            "participant_id",
-                            e.target.value ? Number(e.target.value) : null,
-                          )
-                        }
-                      >
-                        <option value="">Não informado</option>
-                        {data.participants.map((p) => (
-                          <option value={p.id} key={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
+                      <ParticipantPicker participantId={r.participant_id} participantName={r.participant_name} choices={participantChoices} labelsById={participantLabelsById} onChoose={(participantId, participantName) => updateParticipant(r.id, participantId, participantName)} />
                     </td>
                     <td className="conference-document-type">{({ invoice: "Nota fiscal", payroll: "Folha de pagamento", contract: "Contrato" })[r.document_type || "invoice"]}</td>
                     <td>
@@ -1385,7 +1410,7 @@ function Conference({ data }) {
                       </select>
                     </td>
                     <td>
-                      <select className={`ncm-category-select ${r.ncm_category || "other"}`} title={r.ncm_codes || "NCM não informado"} value={r.ncm_category || "other"} onChange={(e) => setRows(rows.map(row => row.id === r.id ? { ...row, ncm_category: e.target.value, cattle_quantity: e.target.value === "cattle" ? row.cattle_quantity : null, is_reviewed: 0 } : row))}>
+                      <select className={`ncm-category-select ${r.ncm_category || "other"}`} title={r.ncm_codes || "NCM não informado"} value={r.ncm_category || "other"} onChange={(e) => setRows(current => current.map(row => row.id === r.id ? { ...row, ncm_category: e.target.value, cattle_quantity: e.target.value === "cattle" ? row.cattle_quantity : null, is_reviewed: 0 } : row))}>
                         <option value="cattle">Gado</option>
                         <option value="soy">Soja</option>
                         <option value="other">Outros</option>
@@ -1419,6 +1444,10 @@ function Conference({ data }) {
                 {!filteredRows.length && <tr className="conference-no-results"><td colSpan="13">Nenhum lançamento corresponde aos filtros das colunas.</td></tr>}
               </tbody>
             </table>
+            {tablePages > 1 && <div className="conference-pagination">
+              <span>{(tablePage - 1) * rowsPerPage + 1}–{Math.min(tablePage * rowsPerPage, filteredRows.length)} de {filteredRows.length} notas</span>
+              <div><button type="button" disabled={tablePage === 1} onClick={() => setTablePage(page => page - 1)}>Anterior</button><b>Página {tablePage} de {tablePages}</b><button type="button" disabled={tablePage === tablePages} onClick={() => setTablePage(page => page + 1)}>Próxima</button></div>
+            </div>}
           </div>
         ) : (
           <Empty text={producer ? "Nenhuma nota encontrada para os filtros selecionados." : "Selecione um produtor para visualizar as notas."} />

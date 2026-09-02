@@ -9,6 +9,9 @@ fs.mkdirSync(dir, { recursive: true })
 const db = new Database(path.join(dir, 'produtor-rural.db'))
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
+db.pragma('synchronous = NORMAL')
+db.pragma('temp_store = MEMORY')
+db.pragma('cache_size = -20000')
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -77,6 +80,14 @@ if (!invoiceColumns.has('is_reviewed')) db.exec('ALTER TABLE invoices ADD COLUMN
 if (!invoiceColumns.has('is_manual')) db.exec('ALTER TABLE invoices ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0')
 if (!invoiceColumns.has('document_type')) db.exec("ALTER TABLE invoices ADD COLUMN document_type TEXT NOT NULL DEFAULT 'invoice'")
 if (!invoiceColumns.has('producer_state_registration')) db.exec('ALTER TABLE invoices ADD COLUMN producer_state_registration TEXT')
+db.exec(`
+CREATE INDEX IF NOT EXISTS idx_invoices_producer_date ON invoices(producer_id, issue_date);
+CREATE INDEX IF NOT EXISTS idx_invoices_producer_farm_date ON invoices(producer_id, farm_id, issue_date);
+CREATE INDEX IF NOT EXISTS idx_invoices_access_key ON invoices(access_key) WHERE access_key IS NOT NULL AND access_key <> '';
+CREATE INDEX IF NOT EXISTS idx_invoices_content_hash ON invoices(content_hash) WHERE content_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_invoices_category_date ON invoices(producer_id, ncm_category, issue_date);
+CREATE INDEX IF NOT EXISTS idx_farms_producer_registration ON farms(producer_id, state_registration);
+`)
 // Mantém a regra mesmo em bases antigas que já possam conter inscrições repetidas.
 // Diferente de um índice UNIQUE, os gatilhos podem ser criados sem apagar dados legados.
 db.exec(`

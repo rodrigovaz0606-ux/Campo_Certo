@@ -51,7 +51,11 @@ const invoiceParties = (parsed, producerDocument) => {
 }
 
 const reconcileInvoiceCpf = db.transaction(() => {
-  const invoices = db.prepare('SELECT i.id,i.producer_id,i.farm_id,i.xml_content,i.operation_type,i.ncm_category,i.participant_id,i.producer_state_registration,p.cpf FROM invoices i JOIN producers p ON p.id=i.producer_id WHERE i.is_manual=0').all()
+  // Importacoes novas ja chegam normalizadas. Reprocessar todos os XMLs a cada
+  // inicializacao fazia o tempo de abertura crescer junto com a base.
+  const invoices = db.prepare(`SELECT i.id,i.producer_id,i.farm_id,i.xml_content,i.operation_type,i.ncm_category,i.participant_id,i.producer_state_registration,p.cpf
+    FROM invoices i JOIN producers p ON p.id=i.producer_id
+    WHERE i.is_manual=0 AND (i.ncm_category IS NULL OR i.operation_type NOT IN ('incoming','outgoing'))`).all()
   const remove = db.prepare('DELETE FROM invoices WHERE id=?')
   const updateType = db.prepare('UPDATE invoices SET operation_type=? WHERE id=?')
   const updateNcm = db.prepare('UPDATE invoices SET ncm_codes=?,ncm_category=? WHERE id=?')
@@ -293,8 +297,16 @@ app.get('/api/invoices', (req, res) => {
     filters.push(`((i.is_manual=0 AND COALESCE(i.producer_state_registration,'')<>'' AND i.producer_state_registration=(SELECT state_registration FROM farms WHERE id=? AND producer_id=i.producer_id)) OR ((i.is_manual=1 OR COALESCE(i.producer_state_registration,'')='') AND i.farm_id=?))`)
     params.push(req.query.farm_id, req.query.farm_id)
   }
-  if (req.query.year) { filters.push("strftime('%Y',i.issue_date)=?"); params.push(String(req.query.year)) }
-  if (req.query.month) { filters.push("strftime('%m',i.issue_date)=?"); params.push(String(req.query.month).padStart(2,'0')) }
+  if (req.query.year) {
+    const year = String(req.query.year)
+    const month = req.query.month ? String(req.query.month).padStart(2, '0') : ''
+    const start = month ? `${year}-${month}-01` : `${year}-01-01`
+    const end = `${Number(year) + 1}-01-01`
+    if (month) {
+      const next = new Date(Date.UTC(Number(year), Number(month), 1)).toISOString().slice(0, 10)
+      filters.push('i.issue_date>=? AND i.issue_date<?'); params.push(start, next)
+    } else { filters.push('i.issue_date>=? AND i.issue_date<?'); params.push(start, end) }
+  }
   if (req.query.ncm_category) { filters.push('i.ncm_category=?'); params.push(req.query.ncm_category) }
   res.json(db.prepare(`SELECT i.id,i.issue_date,i.invoice_number,i.amount,i.operation_type,i.ncm_codes,i.ncm_category,i.cattle_quantity,i.is_reviewed,i.is_manual,i.document_type,i.access_key,i.issuer_name,i.original_filename,i.producer_id,i.farm_id,i.participant_id,p.name producer_name,f.name farm_name,pt.name participant_name FROM invoices i JOIN producers p ON p.id=i.producer_id LEFT JOIN farms f ON f.id=i.farm_id LEFT JOIN participants pt ON pt.id=i.participant_id ${filters.length?'WHERE '+filters.join(' AND '):''} ORDER BY COALESCE(i.issue_date,i.created_at) DESC`).all(...params))
 })
@@ -373,10 +385,10 @@ app.put('/api/animal-stock', (req, res) => {
 })
 app.put('/api/invoices/:id', (req, res) => {
   const { issue_date, producer_id, farm_id, participant_id, invoice_number, amount, operation_type, ncm_category } = req.body
-  const invoice = db.prepare('SELECT xml_content,is_manual FROM invoices WHERE id=?').get(req.params.id)
+  const invoice = db.prepare('SELECT xml_content,is_manual,producer_id FROM invoices WHERE id=?').get(req.params.id)
   const producer = db.prepare('SELECT cpf FROM producers WHERE id=?').get(producer_id)
   if (!invoice || !producer) return res.status(400).json({ error: 'Nota ou produtor inválido.' })
-  if (!invoice.is_manual) {
+  if (!invoice.is_manual && Number(invoice.producer_id) !== Number(producer_id)) {
     const parsed = parseInvoiceXml(invoice.xml_content)
     const cpfMatches = parsed.issuerDocument === producer.cpf || parsed.recipientDocument === producer.cpf
     if (!cpfMatches) return res.status(400).json({ error: 'O CPF do produtor não consta como emitente nem destinatário desta nota.' })
@@ -388,7 +400,7 @@ app.put('/api/invoices/:id', (req, res) => {
   const operationType = operation_type
   const isReviewed = req.body.is_reviewed === 0 || req.body.is_reviewed === false ? 0 : 1
   db.prepare('UPDATE invoices SET issue_date=?,producer_id=?,farm_id=?,participant_id=?,invoice_number=?,amount=?,operation_type=?,ncm_category=?,cattle_quantity=?,is_reviewed=? WHERE id=?').run(issue_date||null,producer_id,farm_id||null,participant_id||null,invoice_number,Number(amount)||0,operationType,ncm_category,cattleQuantity,isReviewed,req.params.id)
-  res.json({ ok: true })
+  res.json({ ok: true, is_reviewed: isReviewed })
 })
 app.get('/api/invoices/:id/xml', (req, res) => { const row=db.prepare('SELECT original_filename,xml_content,is_manual FROM invoices WHERE id=?').get(req.params.id); if(!row)return res.status(404).end(); if(row.is_manual)return res.status(409).json({ error: 'Lançamentos manuais não possuem XML.' }); res.type('application/xml').attachment(row.original_filename).send(row.xml_content) })
 app.delete('/api/invoices/bulk', (req, res) => {

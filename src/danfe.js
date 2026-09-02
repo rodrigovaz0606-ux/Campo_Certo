@@ -62,18 +62,18 @@ const renderBarcodes = container => container.querySelectorAll('.df-barcode').fo
   if(key) JsBarcode(barcode,key,{format:'CODE128',displayValue:false,height:42,margin:2})
 })
 
-async function saveDanfes(xmls, filename) {
-  const notes=xmls.map(parse), host=document.createElement('div'), style=document.createElement('style'), content=document.createElement('div')
+async function saveDanfes(notes, filename) {
+  const host=document.createElement('div'), style=document.createElement('style'), content=document.createElement('div')
   host.style.cssText='position:fixed;left:-10000px;top:0;background:white;z-index:-1'; style.textContent=css+referenceCss; host.append(style,content); content.innerHTML=paginatedTemplates(notes); document.body.append(host)
   try {
     renderBarcodes(content)
-    await html2pdf().set({margin:4,filename,image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},pagebreak:{mode:['css','legacy']}}).from(content).save()
+    await html2pdf().set({margin:4,filename,image:{type:'jpeg',quality:.92},html2canvas:{scale:1.5,useCORS:true,logging:false},jsPDF:{unit:'mm',format:'a4',orientation:'portrait',compress:true},pagebreak:{mode:['css','legacy']}}).from(content).save()
   } finally { host.remove() }
 }
 
 export async function exportDanfePdf(xml) {
   const note=parse(xml)
-  return saveDanfes([xml],`DANFE-${note.number||'nfe'}.pdf`)
+  return saveDanfes([note],`DANFE-${note.number||'nfe'}.pdf`)
 }
 
 export function renderDanfePreview(container, xml) {
@@ -84,5 +84,5 @@ export function renderDanfePreview(container, xml) {
 
 export async function exportMultipleDanfePdf(xmls) {
   if (!xmls.length) throw new Error('Selecione ao menos uma nota.')
-  return saveDanfes(xmls,`DANFEs-selecionadas-${new Date().toISOString().slice(0,10)}.pdf`)
+  return saveDanfes(xmls.map(parse),`DANFEs-selecionadas-${new Date().toISOString().slice(0,10)}.pdf`)
 }
