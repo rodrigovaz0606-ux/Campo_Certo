@@ -10,7 +10,8 @@
     "build": "vite build",
     "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gerar-pacote-windows.ps1",
     "start": "node server/index.js",
-    "test": "node --test server/xml.test.js"
+    "test": "node --test server/xml.test.js server/tenancy.test.js",
+    "check:migration": "node scripts/check-company-migration.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

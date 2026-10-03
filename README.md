@@ -2,6 +2,8 @@
 
 Aplicação web completa para cadastrar produtores, fazendas e participantes, importar notas fiscais eletrônicas em XML e conferir os dados extraídos.
 
+O sistema separa os dados por empresa e mantém um único administrador. Consulte [empresas, acessos e migração](docs/multiempresa.md) antes de atualizar uma instalação existente. Clientes novos são cadastrados pelo administrador em **Usuários → Empresas clientes**.
+
 ## Como executar
 
 Requisitos: Node.js 18 ou superior.

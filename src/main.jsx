@@ -1,3 +1,4 @@
+import { CompanySwitcher, CompanyManagement } from './CompanyControls';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -97,12 +98,20 @@ function CurrencyInput({ value, onValue }) {
   );
 }
 
+function companyHeaders() {
+  const selected = sessionStorage.getItem("active-company");
+  try {
+    return selected && JSON.parse(localStorage.getItem("user"))?.is_admin ? { "X-Company-Id": selected } : {};
+  } catch { return {}; }
+}
+
 function api(path, options = {}) {
   const token = localStorage.getItem("token");
   const headers = {
     ...(options.body instanceof FormData
       ? {}
       : { "Content-Type": "application/json" }),
+    ...companyHeaders(),
     ...options.headers,
   };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -117,6 +126,7 @@ function api(path, options = {}) {
       if (r.status === 401 && token) {
         localStorage.removeItem("token");
         localStorage.removeItem("user");
+        sessionStorage.removeItem("active-company");
         location.reload();
       }
       if (!r.ok) throw new Error(data?.error || `Não foi possível concluir a operação (erro ${r.status}).`);
@@ -153,6 +163,7 @@ function Auth({ onAuth, theme, onThemeToggle }) {
         method: "POST",
         body: JSON.stringify(values),
       });
+      sessionStorage.removeItem("active-company");
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
       onAuth(data.user);
@@ -318,6 +329,7 @@ function Shell({ user, onLogout, theme, onThemeToggle }) {
             <p className="eyebrow">PAINEL DE GESTÃO</p>
             <h2>{availableNav.find((x) => x[0] === page)?.[1]}</h2>
           </div>
+          <CompanySwitcher user={user} api={api} />
           <ThemeToggle theme={theme} onToggle={onThemeToggle} />
           <span className="today">Safra organizada, decisão segura.</span>
         </header>
@@ -384,13 +396,14 @@ function Page({ id, navigate, user }) {
 
 function UserManagement({ currentUser }) {
   const [users, setUsers] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [editing, setEditing] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const load = () => api("/users").then(setUsers);
-  useEffect(() => { load(); }, []);
+  const load = () => Promise.all([api("/users").then(setUsers), api("/companies").then(setCompanies)]);
+  useEffect(() => { load().catch(e => setError(e.message)); }, []);
   const submit = async (event) => {
     event.preventDefault(); setLoading(true); setError(""); setMessage("");
     try {
@@ -415,20 +428,24 @@ function UserManagement({ currentUser }) {
   };
   return <>
     <div className="toolbar"><div><h1>Usuários</h1><p>Somente o administrador pode criar acessos ao Campo Certo.</p></div></div>
+    <CompanyManagement api={api} companies={companies} onChange={load} ConfirmDialog={ConfirmDialog} />
     <div className="user-management">
       <form className="list-card user-create" onSubmit={submit}>
         <h3>Novo usuário</h3>
         <label>Nome completo<input name="name" required /></label>
         <label>E-mail<input name="email" type="email" required /></label>
         <label>Senha inicial<input name="password" type="password" minLength="6" required /></label>
+        <label>Empresa<select name="company_id" required defaultValue=""><option value="" disabled>Selecione a empresa</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
         {error && <div className="error">{error}</div>}{message && <div className="success">{message}</div>}
         <button className="primary" disabled={loading}>{loading ? "Criando..." : "Criar usuário"}</button>
       </form>
-      <div className="list-card"><div className="search"><b>Usuários cadastrados</b></div><div className="table-wrap"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Ações</th></tr></thead><tbody>{users.map(item => <tr key={item.id}><td><b>{item.name}</b></td><td>{item.email}</td><td>{item.is_admin ? "Administrador" : "Usuário"}</td><td><div className="row-actions"><button className="icon" title={`Editar ${item.name}`} aria-label={`Editar ${item.name}`} onClick={() => { setEditing(item); setError(""); }}><Pencil /></button><button className="icon danger" disabled={item.id === currentUser.id} title={item.id === currentUser.id ? "Você não pode excluir sua própria conta" : `Excluir ${item.name}`} aria-label={`Excluir ${item.name}`} onClick={() => setPendingDelete(item)}><Trash2 /></button></div></td></tr>)}</tbody></table></div></div>
+      <div className="list-card"><div className="search"><b>Usuários cadastrados</b></div><div className="table-wrap"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Empresa</th><th>Perfil</th><th>Ações</th></tr></thead><tbody>{users.map(item => <tr key={item.id}><td><b>{item.name}</b></td><td>{item.email}</td><td>{item.company_name}</td><td>{item.is_admin ? "Administrador" : "Usuário"}</td><td><div className="row-actions"><button className="icon" title={`Editar ${item.name}`} aria-label={`Editar ${item.name}`} onClick={() => { setEditing(item); setError(""); }}><Pencil /></button><button className="icon danger" disabled={item.id === currentUser.id} title={item.id === currentUser.id ? "Você não pode excluir sua própria conta" : `Excluir ${item.name}`} aria-label={`Excluir ${item.name}`} onClick={() => setPendingDelete(item)}><Trash2 /></button></div></td></tr>)}</tbody></table></div></div>
     </div>
     {editing && <Modal title="Editar usuário" close={() => setEditing(null)}><form className="modal-form" onSubmit={updateUser}>
       <label>Nome completo<input name="name" required defaultValue={editing.name} /></label>
       <label>E-mail<input name="email" type="email" required defaultValue={editing.email} /></label>
+      <label>Empresa<select name="company_id" required defaultValue={editing.company_id} disabled={Boolean(editing.is_admin)}>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+      <p>Trocar a empresa encerra as sessões deste usuário. Os registros ficam na empresa de origem.</p>
       <label>Nova senha (opcional)<input name="password" type="password" minLength="6" placeholder="Deixe em branco para manter a atual" /></label>
       {error && <div className="error">{error}</div>}
       <div className="actions"><button type="button" onClick={() => setEditing(null)}>Cancelar</button><button className="primary" disabled={loading}>{loading ? "Salvando..." : "Salvar alterações"}</button></div>
@@ -578,7 +595,7 @@ function Crud({ type, title, items, producers, reload }) {
           <Plus /> Novo cadastro
         </button>
       </div>
-      <div className="list-card">
+      <div className={`list-card${type === "participants" ? " participants-card" : ""}`}>
         <div className="search">
           <Search />
           <input
@@ -588,7 +605,7 @@ function Crud({ type, title, items, producers, reload }) {
           />
         </div>
         {filtered.length ? (
-          <div className="table-wrap">
+          <div className="table-wrap" tabIndex={type === "participants" ? 0 : undefined} role={type === "participants" ? "region" : undefined} aria-label={type === "participants" ? "Lista de participantes, com rolagem" : undefined}>
             <table>
               <thead>
                 <tr>
@@ -875,7 +892,7 @@ function Importer({ data }) {
 
 async function invoiceXml(row) {
   const response = await fetch(`/api/invoices/${row.id}/xml`, {
-    headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+    headers: { Authorization: `Bearer ${localStorage.getItem("token")}`, ...companyHeaders() },
   });
   if (!response.ok) throw new Error("Não foi possível obter o XML desta nota.");
   return response;
@@ -1747,6 +1764,16 @@ function Empty({ text }) {
   );
 }
 function App() {
+  useEffect(() => {
+    const syncAccount = event => {
+      if (event.key === 'token' || event.key === null) {
+        sessionStorage.removeItem('active-company');
+        window.location.reload();
+      }
+    };
+    window.addEventListener('storage', syncAccount);
+    return () => window.removeEventListener('storage', syncAccount);
+  }, []);
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("theme");
     if (saved === "light" || saved === "dark") return saved;
@@ -1777,6 +1804,7 @@ function App() {
       onLogout={() => {
         localStorage.removeItem("token");
         localStorage.removeItem("user");
+        sessionStorage.removeItem("active-company");
         setUser(null);
       }}
     />

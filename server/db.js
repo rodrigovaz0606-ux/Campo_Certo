@@ -4,9 +4,11 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
-const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data')
+export const dataDir = path.resolve(process.env.DATA_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data'))
+const dir = dataDir
 fs.mkdirSync(dir, { recursive: true })
-const db = new Database(path.join(dir, 'produtor-rural.db'))
+export function openBusinessDatabase(filename) {
+const db = new Database(filename)
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
 db.pragma('synchronous = NORMAL')
@@ -14,10 +16,6 @@ db.pragma('temp_store = MEMORY')
 db.pragma('cache_size = -20000')
 
 db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
 CREATE TABLE IF NOT EXISTS producers (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, cpf TEXT NOT NULL UNIQUE,
   address TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -100,14 +98,9 @@ BEFORE UPDATE OF state_registration ON farms
 WHEN EXISTS (SELECT 1 FROM farms WHERE state_registration = NEW.state_registration AND id <> NEW.id)
 BEGIN SELECT RAISE(ABORT, 'duplicate farm state registration'); END;
 `)
-const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name))
-if (!userColumns.has('is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0')
-if (!db.prepare('SELECT COUNT(*) total FROM users WHERE is_admin=1').get().total) {
-  const firstUser = db.prepare('SELECT id FROM users ORDER BY id LIMIT 1').get()
-  if (firstUser) db.prepare('UPDATE users SET is_admin=1 WHERE id=?').run(firstUser.id)
-}
 const invoicesWithoutHash = db.prepare('SELECT id,xml_content FROM invoices WHERE content_hash IS NULL').all()
 const saveContentHash = db.prepare('UPDATE invoices SET content_hash=? WHERE id=?')
 db.transaction(rows => rows.forEach(row => saveContentHash.run(crypto.createHash('sha256').update(row.xml_content.replace(/\s+/g, '')).digest('hex'), row.id)))(invoicesWithoutHash)
 
-export default db
+return db
+}
