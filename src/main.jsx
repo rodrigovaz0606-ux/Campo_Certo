@@ -1,5 +1,5 @@
 import { CompanySwitcher, CompanyManagement } from './CompanyControls';
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import {
@@ -595,7 +595,7 @@ function Crud({ type, title, items, producers, reload }) {
           <Plus /> Novo cadastro
         </button>
       </div>
-      <div className={`list-card${type === "participants" ? " participants-card" : ""}`}>
+      <div className="list-card registry-card">
         <div className="search">
           <Search />
           <input
@@ -605,7 +605,7 @@ function Crud({ type, title, items, producers, reload }) {
           />
         </div>
         {filtered.length ? (
-          <div className="table-wrap" tabIndex={type === "participants" ? 0 : undefined} role={type === "participants" ? "region" : undefined} aria-label={type === "participants" ? "Lista de participantes, com rolagem" : undefined}>
+          <div className="table-wrap" tabIndex={0} role="region" aria-label={`Lista de ${title.toLowerCase()}, com rolagem`}>
             <table>
               <thead>
                 <tr>
@@ -904,18 +904,40 @@ function ExportMenu({ row }) {
   const [previewXml, setPreviewXml] = useState("");
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
+  const optionsRef = useRef(null);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  useLayoutEffect(() => {
+    if (!open) return;
+    const trigger = menuRef.current.getBoundingClientRect();
+    const options = optionsRef.current.getBoundingClientRect();
+    const left = trigger.left - options.width - 8;
+    setMenuPosition({
+      left: Math.max(8, Math.min(left >= 8 ? left : trigger.left, window.innerWidth - options.width - 8)),
+      top: Math.max(8, Math.min(trigger.top, window.innerHeight - options.height - 8)),
+    });
+  }, [open]);
   useEffect(() => {
+    if (!open) return;
     const closeMenu = (event) => {
-      if (!event || !menuRef.current?.contains(event.target)) setOpen(false);
+      if (!event || (!menuRef.current?.contains(event.target) && !optionsRef.current?.contains(event.target))) setOpen(false);
+    };
+    const escapeMenu = event => {
+      if (event.key === "Escape") { setOpen(false); menuRef.current?.querySelector('button')?.focus(); }
     };
     const scrollArea = menuRef.current?.closest(".table-wrap");
     document.addEventListener("mousedown", closeMenu);
+    document.addEventListener("keydown", escapeMenu);
+    window.addEventListener("resize", closeMenu);
+    window.addEventListener("scroll", closeMenu);
     scrollArea?.addEventListener("scroll", closeMenu, { passive: true });
     return () => {
       document.removeEventListener("mousedown", closeMenu);
+      document.removeEventListener("keydown", escapeMenu);
+      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("scroll", closeMenu);
       scrollArea?.removeEventListener("scroll", closeMenu);
     };
-  }, []);
+  }, [open]);
   const preview = async () => {
     setBusy(true); setError("");
     try { const response = await invoiceXml(row); setPreviewXml(await response.text()); }
@@ -940,11 +962,11 @@ function ExportMenu({ row }) {
   };
   return <><div className="export-wrap"><div className={`export-menu${open ? " open" : ""}`} ref={menuRef}>
     <button type="button" className="export-trigger" disabled={busy} aria-expanded={open} onClick={() => setOpen(value => !value)}><Download />{busy ? "Aguarde..." : "Exportar"}</button>
-    <div className="export-options">
+    {open && createPortal(<div className="export-options export-options-floating" ref={optionsRef} style={menuPosition} onClick={() => setOpen(false)}>
       <button onClick={preview}><Eye /><span><b>Visualizar nota</b><small>Abrir conferência rápida</small></span></button>
       <button onClick={downloadXml}><FileText /><span><b>XML original</b><small>Baixar arquivo fiscal</small></span></button>
       <button onClick={downloadDanfe}><Download /><span><b>DANFE em PDF</b><small>Gerar documento auxiliar</small></span></button>
-    </div>
+    </div>, document.body)}
   </div>{error && <span className="export-error" title={error}>Falha ao abrir a nota</span>}</div>{previewXml && <DanfePreview xml={previewXml} close={() => setPreviewXml("")} />}</>;
 }
 

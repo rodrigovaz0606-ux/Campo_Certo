@@ -5,6 +5,7 @@
 .export-trigger svg { width: 15px; }
 .export-options { position: absolute; z-index: 2; top: 0; right: calc(100% + 8px); width: 230px; padding: 6px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 35px #183b2b2b; display: none; }
 .export-menu.open .export-options { display: grid; }
+.export-options-floating { position: fixed; z-index: 90; right: auto; display: grid; width: min(230px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; font-size: 12px; }
 .export-options button { border: 0; background: transparent; border-radius: 7px; padding: 9px; display: flex; align-items: center; gap: 10px; text-align: left; color: #27382f; }
 .export-options button:hover { background: #edf3e8; }
 .export-options svg { width: 17px; color: var(--green); }
