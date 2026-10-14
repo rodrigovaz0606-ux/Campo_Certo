@@ -31,6 +31,8 @@ Na primeira busca, a SEFAZ pode devolver notas dos últimos 3 meses (é o limite
 | 593 / 594 | CPF diferente do certificado | Conferir se o certificado é do produtor certo. |
 | 403 | Certificado recusado | Conferir se é A1 válido, não vencido e ICP-Brasil. |
 
+Para testar só a consulta, sem registrar a Ciência da Operação, inicie o servidor com a variável `SEFAZ_MANIFESTAR=0`.
+
 Se aparecer algum outro erro durante o teste na empresa, anote a mensagem exibida (ela traz o código da SEFAZ) para ajustarmos.
 
 ## LCDPR
@@ -47,3 +49,12 @@ O arquivo segue o layout 1.3 do LCDPR, com os registros 0000, 0010, 0030, 0040, 
 - todos os lançamentos usam a conta bancária informada.
 
 **Antes de transmitir**, abra o arquivo no programa do LCDPR da Receita e rode a validação. Se o programa apontar erro em algum registro, anote a linha e a mensagem para ajustarmos o gerador.
+
+## Consulta de inscrição estadual no cadastro de fazendas
+
+No cadastro da fazenda, ao lado da inscrição estadual, o botão **Buscar na SEFAZ** consulta o cadastro oficial de contribuintes (a mesma base do Sintegra). Ele preenche endereço, número, complemento, bairro e CEP e mostra a situação da inscrição (habilitada ou não) e o titular.
+
+- **Titular:** se o titular não for o produtor escolhido nem um sócio cadastrado, aparece um aviso em vermelho.
+- **Município:** o código IBGE do município é guardado nos dados do LCDPR da fazenda, se ainda não estiver preenchido.
+- **Certificado usado:** o do produtor, se ele tiver um cadastrado; senão, o **certificado do escritório**, cadastrado em **Usuários → Certificado do escritório** (e-CNPJ ou e-CPF A1).
+- **Estados:** Goiás foi testado com consulta real. Também estão configurados MT, MS, MG, SP, PR, RS, BA e PE. Os estados que não oferecem esse serviço exigem preenchimento manual.

@@ -5,7 +5,21 @@ export function companyHeaders() {
   } catch { return {}; }
 }
 
+// Conta as requisições em andamento para a barra de carregamento do topo da tela.
+let pending = 0;
+const loadingListeners = new Set();
+export const onLoadingChange = (listener) => { loadingListeners.add(listener); return () => loadingListeners.delete(listener); };
+const track = (promise) => {
+  pending++;
+  loadingListeners.forEach((listener) => listener(pending > 0));
+  return promise.finally(() => { pending--; loadingListeners.forEach((listener) => listener(pending > 0)); });
+};
+
 export function api(path, options = {}) {
+  return track(request(path, options));
+}
+
+function request(path, options) {
   const token = localStorage.getItem("token");
   const headers = {
     ...(options.body instanceof FormData
@@ -39,18 +53,18 @@ export function api(path, options = {}) {
 }
 
 export async function invoiceXml(row) {
-  const response = await fetch(`/api/invoices/${row.id}/xml`, {
+  const response = await track(fetch(`/api/invoices/${row.id}/xml`, {
     headers: { Authorization: `Bearer ${localStorage.getItem("token")}`, ...companyHeaders() },
-  });
+  }));
   if (!response.ok) throw new Error("Não foi possível obter o XML desta nota.");
   return response;
 }
 
 // Baixa um arquivo protegido pela sessão (anexos, relatórios) e o entrega ao navegador.
 export async function downloadFile(path, filename) {
-  const response = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}`, ...companyHeaders() } });
+  const response = await track(fetch(`/api${path}`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}`, ...companyHeaders() } }));
   if (!response.ok) throw new Error("Não foi possível baixar o arquivo.");
-  const url = URL.createObjectURL(await response.blob());
+  const url = URL.createObjectURL(await track(response.blob()));
   const link = document.createElement("a");
   link.href = url; link.download = filename; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);

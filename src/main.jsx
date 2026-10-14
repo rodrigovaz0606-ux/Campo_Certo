@@ -4,6 +4,7 @@ import { api } from "./api";
 import { Auth } from "./pages/Auth";
 import { Shell } from "./Shell";
 import "./styles.css";
+import "./sidebar.css";
 import "./partners.css";
 import "./export.css";
 import "./insights.css";

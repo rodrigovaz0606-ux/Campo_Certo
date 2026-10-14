@@ -1,7 +1,33 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Sprout, Trash2, X, Moon, Sun } from "lucide-react";
 import { money, maskCpf, maskCpfCnpj, maskIe, maskCep } from "./format";
+import { onLoadingChange } from "./api";
+
+// Ícone giratório de carregamento (também usado dentro de botões).
+export function Spinner({ size = 18 }) {
+  return <svg className="spinner" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" strokeWidth="3" /></svg>;
+}
+
+// Bloco de carregamento no lugar do conteúdo que ainda está chegando.
+export function Loading({ text = "Carregando..." }) {
+  return <div className="loading-block" role="status" aria-live="polite"><Spinner size={30} /><span>{text}</span></div>;
+}
+
+// Barra fina no topo da tela enquanto houver requisição ao servidor (só aparece se demorar mais que 150 ms).
+export function GlobalProgress() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    let timer;
+    const unsubscribe = onLoadingChange((busy) => {
+      clearTimeout(timer);
+      if (busy) timer = setTimeout(() => setVisible(true), 150);
+      else setVisible(false);
+    });
+    return () => { clearTimeout(timer); unsubscribe(); };
+  }, []);
+  return visible ? <div className="global-progress" role="progressbar" aria-label="Carregando" /> : null;
+}
 
 export function MaskedNumberInput({ name, kind = "cpf", value, defaultValue = "", onValue, placeholder, required = true }) {
   const format = kind === "document" ? maskCpfCnpj : kind === "ie" ? maskIe : kind === "cep" ? maskCep : maskCpf;

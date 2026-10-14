@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Sprout, Users, Tractor, UserRound, Upload, FileText } from "lucide-react";
 import { money, readSaved, saveValue, monthNames, compactMoney, niceMax } from "../format";
 import { api } from "../api";
-import { Stat, Empty } from "../components";
+import { Stat, Empty, Loading } from "../components";
 
 export function Dashboard({ navigate, data }) {
   const [d, setD] = useState(null);
@@ -52,7 +52,7 @@ export function Dashboard({ navigate, data }) {
           value={d?.invoices?.total}
         />
       </div>
-      {hasInvoices ? (
+      {!d ? <section className="list-card"><Loading text="Carregando painel..." /></section> : hasInvoices ? (
         <section className="list-card chart-card">
           <div className="chart-card-head">
             <div>

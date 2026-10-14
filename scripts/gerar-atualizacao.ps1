@@ -76,6 +76,13 @@ NOVIDADES DESTA VERSAO
 - Gerar LCDPR em Resumo anual (validar no programa da Receita antes de transmitir).
 - Buscar notas na SEFAZ com o certificado A1 do produtor (Produtores > icone de escudo para cadastrar;
   Importar notas > Buscar notas na SEFAZ). Veja GUIA-SEFAZ-E-LCDPR.md neste pacote.
+- Busca na SEFAZ por periodo (mes ou datas): importa so as notas do periodo e guarda as outras.
+- Cadastro de fazenda consulta a inscricao estadual na SEFAZ (base do Sintegra) e preenche endereco,
+  CEP e o produtor sozinho. Certificado do escritorio em Usuarios > Certificado do escritorio.
+- LCDPR revisado conforme o leiaute 1.3 e o manual oficial da Receita, com validador automatico:
+  todo arquivo e conferido antes do download.
+- Cadastros mais rapidos (100 por vez, com "Mostrar mais") e indicadores de carregamento.
+- Barra lateral redesenhada: mais fluida, botao de recolher dentro da barra.
 "@
 Set-Content -LiteralPath (Join-Path $stageRoot 'LEIA-ME-ATUALIZACAO.txt') -Value $readme -Encoding UTF8
 

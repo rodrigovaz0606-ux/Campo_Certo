@@ -1,0 +1,52 @@
+/* Barra lateral nas medidas originais (250px aberta). A largura anima pela grade da página; ícones, logo e
+   avatar ficam sempre na mesma posição e só os textos (.side-label) somem, com transição.
+   O botão de recolher fica na própria barra: ao lado do nome quando aberta e sobre o logo (ao passar o mouse) quando minimizada. */
+:root { --side-w: 250px; --side-w-collapsed: 83px; --side-ease: cubic-bezier(.22, .8, .24, 1); }
+.app { grid-template-columns: var(--side-w) minmax(0, 1fr); transition: grid-template-columns .3s var(--side-ease); }
+.app.sidebar-collapsed { grid-template-columns: var(--side-w-collapsed) minmax(0, 1fr); }
+aside { padding: 30px 18px 27px; overflow: visible; z-index: 15; }
+
+.side-label { display: block; min-width: 0; max-width: 200px; overflow: hidden; white-space: nowrap; opacity: 1; transition: opacity .2s ease .06s, max-width .3s var(--side-ease), margin .3s var(--side-ease); }
+.sidebar-collapsed .side-label { max-width: 0; opacity: 0; margin-left: 0 !important; transition: opacity .12s ease, max-width .3s var(--side-ease), margin .3s var(--side-ease); }
+
+aside .logo { position: relative; gap: 0; padding: 0 0 38px 6px; white-space: nowrap; font-size: 20px; }
+aside .logo span { flex: none; width: 35px; height: 35px; }
+aside .logo .side-label { margin-left: 11px; }
+
+.sidebar-toggle { flex: none; margin: 0 -6px 0 auto; width: 32px; height: 32px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: #b9c9bf; cursor: pointer; transition: background .15s, color .15s, opacity .15s; }
+.sidebar-toggle svg { width: 19px; height: 19px; }
+.sidebar-toggle:hover { background: #285842; color: #fff; }
+.sidebar-toggle:focus-visible { outline: 2px solid var(--lime); outline-offset: 1px; opacity: 1; }
+/* Minimizada: o botão cobre o logo e aparece ao passar o mouse sobre ele. */
+.sidebar-collapsed .sidebar-toggle { position: absolute; left: 6px; top: 0; width: 35px; height: 35px; margin: 0; border-radius: 10px; background: #285842; color: #fff; opacity: 0; }
+.sidebar-collapsed .logo:hover .sidebar-toggle, .sidebar-collapsed .sidebar-toggle:focus-visible { opacity: 1; }
+
+nav { gap: 6px; }
+nav button, .side-footer .logout { position: relative; width: 100%; display: flex; align-items: center; gap: 0; padding: 13.5px 14px; border: 0; border-radius: 8px; background: transparent; color: #b9c9bf; font-size: 16px; text-align: left; transition: background .15s, color .15s; }
+nav button svg, .side-footer .logout svg { flex: none; width: 19px; height: 19px; }
+nav button .side-label, .side-footer .logout .side-label { margin-left: 12px; }
+nav button:hover, nav button.active, .side-footer .logout:hover { background: #285842; color: #fff; }
+nav button.active { box-shadow: inset 3px 0 var(--lime); }
+nav button:focus-visible, .side-footer .logout:focus-visible { outline: 2px solid var(--lime); outline-offset: -2px; }
+
+.side-footer { margin-top: auto; padding-top: 16px; border-top: 1px solid #315746; display: grid; gap: 6px; }
+.side-footer .account { position: relative; margin: 0; padding: 4px 5px 6px; border: 0; gap: 0; }
+.side-footer .account .avatar { flex: none; }
+.side-footer .account .side-label { margin-left: 10px; }
+
+/* Nome do item ao passar o mouse com a barra minimizada */
+.sidebar-collapsed [data-tip]:hover::after, .sidebar-collapsed .sidebar-toggle:hover::after { content: attr(data-tip); position: absolute; left: calc(100% + 14px); top: 50%; transform: translateY(-50%); z-index: 40; padding: 6px 10px; border-radius: 7px; background: #17231d; color: #fff; font-size: 12px; font-weight: 600; white-space: nowrap; box-shadow: 0 6px 18px #0004; pointer-events: none; }
+.sidebar-collapsed .sidebar-toggle:hover::after { content: "Expandir"; }
+
+@media (max-width: 1000px) { :root { --side-w: 224px; } }
+@media (max-width: 720px) {
+  aside, .sidebar-collapsed aside { position: fixed; z-index: 20; width: 270px; padding: 27px 18px; transform: translateX(-100%); transition: transform .25s var(--side-ease); }
+  aside.open { transform: none; }
+  .sidebar-toggle, .sidebar-collapsed .sidebar-toggle { display: none; }
+  .sidebar-collapsed .side-label { max-width: 190px; opacity: 1; }
+  .sidebar-collapsed nav button .side-label, .sidebar-collapsed .side-footer .logout .side-label { margin-left: 12px !important; }
+  .sidebar-collapsed .logo .side-label { margin-left: 11px !important; }
+  .sidebar-collapsed .side-footer .account .side-label { margin-left: 10px !important; }
+  .sidebar-collapsed [data-tip]:hover::after { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .app, .side-label { transition-duration: .01s; } }

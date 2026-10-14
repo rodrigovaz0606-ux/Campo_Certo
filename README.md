@@ -27,10 +27,11 @@ Abra `http://localhost:5173` e entre com a conta de administrador. Novos acessos
 - Importação de vários XMLs ou de uma pasta inteira, com detecção de notas duplicadas.
 - Extração automática de data, número, valor, chave de acesso, emitente, classificação por NCM (gado, soja, outros) e quantidade de cabeças nas notas de gado (unidades CB, CAB, UN, VOL...; vendas por peso ficam para preenchimento manual).
 - Conferência por produtor, fazenda, ano ou mês em grade editável, com lançamentos manuais e atalhos de pendências: notas não conferidas, sem fazenda, sem participante, gado sem quantidade e possíveis duplicadas.
-- Busca de notas na SEFAZ (Distribuição DF-e) com o certificado A1 do produtor, com ciência da operação automática para liberar o XML completo ([como testar](docs/sefaz-e-lcdpr.md)).
+- Busca de notas na SEFAZ (Distribuição DF-e) com o certificado A1 do produtor, por período, com ciência da operação automática para liberar o XML completo ([como testar](docs/sefaz-e-lcdpr.md)).
+- Cadastro de fazenda com consulta da inscrição estadual na SEFAZ (base do Sintegra), que preenche endereço, CEP e produtor.
 - Exportação da conferência em planilha, dos XMLs em ZIP e da DANFE em PDF com texto selecionável (individual ou em lote), além da visualização da nota na tela.
 - Comprovantes (PDF ou imagem) anexados aos lançamentos manuais.
-- Resumo anual (livro-caixa) com impressão, exportação para o programa do IRPF e geração do arquivo do LCDPR.
+- Resumo anual (livro-caixa) com impressão, exportação para o programa do IRPF e geração do arquivo do LCDPR (leiaute 1.3), conferido por um validador do leiaute antes do download.
 - Estoque e movimentação de animais, com referência às quantidades das notas.
 - Painel com gráfico mensal de receitas e despesas por produtor (e fazenda, opcional).
 - Backup automático diário de todos os bancos.

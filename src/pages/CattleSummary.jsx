@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { api } from "../api";
-import { Empty } from "../components";
+import { Empty, Loading } from "../components";
 
 export function CattleSummary({ data }) {
   const [producer, setProducer] = useState("");
@@ -83,7 +83,7 @@ export function CattleSummary({ data }) {
         <div><p className="eyebrow">MOVIMENTAÇÃO DO REBANHO · BRASIL</p><h2>Estoque total em {year}</h2><small>O estoque final é calculado por: inicial + aquisições + nascimentos − consumo e perdas − vendas.</small></div>
         <div className="animal-stock-total"><small>Estoque final total</small><strong>{loading ? "…" : totalStock.toLocaleString("pt-BR")}</strong></div>
       </div>
-      {loading ? <Empty text="Carregando movimentação de animais..." /> : <div className="animal-stock-table-wrap"><table className="animal-stock-table">
+      {loading ? <Loading text="Carregando movimentação de animais..." /> : <div className="animal-stock-table-wrap"><table className="animal-stock-table">
         <thead><tr><th>Cód.</th><th>Espécie</th><th>Estoque inicial</th><th>Aquisições</th><th>Nascimentos</th><th>Consumo e perdas</th><th>Vendas</th><th>Estoque final</th></tr></thead>
         <tbody>{rows.map(row => <tr key={row.code}>
           <td>{row.code}</td><th scope="row">{row.name}</th>

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Download, Printer, BookOpenCheck } from "lucide-react";
 import { money, maskCpf, maskIe, formatAddress, annualMonths } from "../format";
 import { api } from "../api";
-import { Empty } from "../components";
+import { Empty, Loading } from "../components";
 import { LcdprModal } from "./Lcdpr";
 
 export function AnnualSummary({ data }) {
@@ -119,7 +119,7 @@ export function AnnualSummary({ data }) {
           <p><b>Ano-calendário:</b> {year}</p>
         </div>
       </div>
-      {loading ? <Empty text="Calculando o resumo anual..." /> : <div className="annual-table-wrap">
+      {loading ? <Loading text="Calculando o resumo anual..." /> : <div className="annual-table-wrap">
         <table className="annual-table">
           <thead><tr><th>Mês</th><th>Receita bruta</th><th>Despesa de custeio<br />e investimento</th></tr></thead>
           <tbody>

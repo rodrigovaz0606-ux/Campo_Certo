@@ -82,12 +82,13 @@ export function openCertificate(sealed, secret) {
 
 // ---------- SOAP ----------
 
-function soapRequest(url, action, body, certificate, timeout = 30000) {
+// `extraAuthorities`: autoridades adicionais (ex.: raízes ICP-Brasil, usadas por algumas SEFAZ estaduais).
+export function soapRequest(url, action, body, certificate, { timeout = 30000, extraAuthorities = [] } = {}) {
   const envelope = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body>${body}</soap12:Body></soap12:Envelope>`
   return new Promise((resolve, reject) => {
     const request = https.request(url, {
       method: 'POST', key: certificate.keyPem, cert: certificate.certPem, timeout,
-      ca: extraCa.length ? [...tls.rootCertificates, ...extraCa] : undefined,
+      ca: extraCa.length || extraAuthorities.length ? [...tls.rootCertificates, ...extraAuthorities, ...extraCa] : undefined,
       headers: { 'Content-Type': `application/soap+xml; charset=utf-8; action="${action}"`, 'Content-Length': Buffer.byteLength(envelope) },
     }, response => {
       const chunks = []
@@ -105,14 +106,14 @@ function soapRequest(url, action, body, certificate, timeout = 30000) {
   })
 }
 
-const findKey = (node, key) => {
+export const findKey = (node, key) => {
   if (!node || typeof node !== 'object') return undefined
   if (key in node) return node[key]
   for (const value of Object.values(node)) { const found = findKey(value, key); if (found !== undefined) return found }
   return undefined
 }
-const list = value => value == null ? [] : Array.isArray(value) ? value : [value]
-const textOf = value => typeof value === 'object' ? value?.['#text'] ?? '' : String(value ?? '')
+export const list = value => value == null ? [] : Array.isArray(value) ? value : [value]
+export const textOf = value => typeof value === 'object' ? value?.['#text'] ?? '' : String(value ?? '')
 
 /** Uma chamada ao NFeDistribuicaoDFe a partir do último NSU recebido. */
 export async function distDfe({ certificate, uf, document, ultNSU }) {
@@ -185,29 +186,61 @@ export function ensureSefazTables(db) {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(producer_id, access_key),
       FOREIGN KEY(producer_id) REFERENCES producers(id) ON DELETE CASCADE
     );
+    -- Certificado do escritório (e-CNPJ/e-CPF), usado na consulta de inscrições quando o produtor não tem o dele.
+    CREATE TABLE IF NOT EXISTS office_certificate (
+      id INTEGER PRIMARY KEY CHECK(id = 1), sealed BLOB NOT NULL, holder_name TEXT, holder_document TEXT,
+      valid_until TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    -- Notas completas recebidas da SEFAZ. As de fora do período escolhido ficam 'pending' para importar depois.
+    CREATE TABLE IF NOT EXISTS sefaz_documents (
+      producer_id INTEGER NOT NULL, access_key TEXT NOT NULL, nsu TEXT, issue_date TEXT, xml TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending', created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(producer_id, access_key),
+      FOREIGN KEY(producer_id) REFERENCES producers(id) ON DELETE CASCADE
+    );
   `)
 }
 
 export function sefazStatus(db, producerId) {
   const state = db.prepare('SELECT ult_nsu,max_nsu,last_query_at,next_allowed_at,last_status FROM sefaz_state WHERE producer_id=?').get(producerId) || null
   const pending = db.prepare('SELECT COUNT(*) total FROM sefaz_summaries WHERE producer_id=? AND imported=0').get(producerId).total
-  return { state, pending }
+  const stored = db.prepare("SELECT COUNT(*) total, MIN(issue_date) first_date, MAX(issue_date) last_date FROM sefaz_documents WHERE producer_id=? AND status='pending'").get(producerId)
+  return { state, pending, stored }
+}
+
+// Período opcional { from: 'aaaa-mm-dd', to: 'aaaa-mm-dd' }; sem período, vale tudo.
+const inPeriod = (period, date) => !period || (!!date && date >= period.from && date <= period.to)
+
+function importDocument(db, producer, row, importXml, report) {
+  const result = importXml(row.xml, `${row.access_key}-sefaz.xml`)
+  if (result === 'imported') report.imported++
+  else if (result === 'duplicate') report.duplicates++
+  else report.errors.push(result)
+  db.prepare('UPDATE sefaz_documents SET status=? WHERE producer_id=? AND access_key=?').run(result === 'imported' || result === 'duplicate' ? 'imported' : 'error', producer.id, row.access_key)
+  db.prepare('UPDATE sefaz_summaries SET imported=1 WHERE producer_id=? AND access_key=?').run(producer.id, row.access_key)
+}
+
+/** Importa as notas já recebidas da SEFAZ e guardadas, dentro do período. Não consulta a SEFAZ. */
+export function importStored({ db, producer, period, importXml }) {
+  const report = { imported: 0, duplicates: 0, errors: [], remaining: 0 }
+  const rows = db.prepare("SELECT access_key,xml,issue_date FROM sefaz_documents WHERE producer_id=? AND status='pending' ORDER BY issue_date").all(producer.id)
+  db.transaction(() => { for (const row of rows) inPeriod(period, row.issue_date) ? importDocument(db, producer, row, importXml, report) : report.remaining++ })()
+  return report
 }
 
 /**
  * Busca documentos novos e importa as notas completas. `importXml(xml, filename)` devolve 'imported' | 'duplicate' | mensagem de erro.
  * Respeita o intervalo exigido pela SEFAZ e para depois de 20 consultas por vez.
  */
-export async function syncProducer({ db, producer, certificate, uf, importXml, now = Date.now() }) {
+export async function syncProducer({ db, producer, certificate, uf, importXml, period = null, now = Date.now() }) {
   const state = db.prepare('SELECT * FROM sefaz_state WHERE producer_id=?').get(producer.id) || { ult_nsu: '000000000000000' }
   if (state.next_allowed_at && new Date(state.next_allowed_at).getTime() > now) {
     const when = new Date(state.next_allowed_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })
     throw Object.assign(new Error(`A SEFAZ só permite uma nova consulta para este produtor depois das ${when}.`), { status: 429 })
   }
-  const report = { queries: 0, imported: 0, duplicates: 0, summaries: 0, events: 0, canceled: [], errors: [], manifested: 0, manifestErrors: [], status: '' }
+  const report = { queries: 0, imported: 0, duplicates: 0, outOfPeriod: 0, summaries: 0, events: 0, canceled: [], errors: [], manifested: 0, manifestErrors: [], status: '' }
   const saveSummary = db.prepare(`INSERT INTO sefaz_summaries (access_key,producer_id,nsu,issuer_document,issuer_name,issue_date,amount,situation) VALUES (?,?,?,?,?,?,?,?)
     ON CONFLICT(producer_id,access_key) DO UPDATE SET nsu=excluded.nsu,situation=excluded.situation`)
-  const markImported = db.prepare('UPDATE sefaz_summaries SET imported=1 WHERE producer_id=? AND access_key=?')
+  const saveDocument = db.prepare('INSERT OR IGNORE INTO sefaz_documents (producer_id,access_key,nsu,issue_date,xml) VALUES (?,?,?,?,?)')
   let ultNSU = state.ult_nsu, maxNSU = state.max_nsu, waitUntil = null
   for (let i = 0; i < 20; i++) {
     const response = await distDfe({ certificate, uf, document: producer.cpf, ultNSU })
@@ -218,12 +251,13 @@ export async function syncProducer({ db, producer, certificate, uf, importXml, n
     for (const item of response.docs) {
       const parsed = parser.parse(item.xml)
       if (parsed.nfeProc || item.schema.startsWith('procNFe')) {
-        const key = textOf(findKey(parsed, 'chNFe'))
-        const result = importXml(item.xml, `${key || `nsu-${item.nsu}`}-sefaz.xml`)
-        if (result === 'imported') report.imported++
-        else if (result === 'duplicate') report.duplicates++
-        else report.errors.push(result)
-        if (key) markImported.run(producer.id, key)
+        const key = textOf(findKey(parsed, 'chNFe')) || `nsu-${item.nsu}`
+        const issueDate = textOf(findKey(parsed, 'dhEmi') ?? findKey(parsed, 'dEmi')).slice(0, 10)
+        saveDocument.run(producer.id, key, item.nsu, issueDate, item.xml)
+        const row = db.prepare('SELECT access_key,xml,status FROM sefaz_documents WHERE producer_id=? AND access_key=?').get(producer.id, key)
+        if (row.status !== 'pending') report.duplicates++
+        else if (inPeriod(period, issueDate)) importDocument(db, producer, row, importXml, report)
+        else report.outOfPeriod++
       } else if (parsed.resNFe) {
         const r = parsed.resNFe
         saveSummary.run(textOf(r.chNFe), producer.id, item.nsu, digits(textOf(r.CNPJ) || textOf(r.CPF)), textOf(r.xNome), textOf(r.dhEmi).slice(0, 10), Number(textOf(r.vNF) || 0), textOf(r.cSitNFe))
@@ -243,7 +277,9 @@ export async function syncProducer({ db, producer, certificate, uf, importXml, n
     .run(producer.id, ultNSU, maxNSU || null, new Date(now).toISOString(), waitUntil ? new Date(waitUntil).toISOString() : null, report.status)
 
   // Ciência da Operação para os resumos ainda sem XML (autorizadas e não manifestadas), 20 por lote.
-  const pending = db.prepare("SELECT access_key FROM sefaz_summaries WHERE producer_id=? AND imported=0 AND manifested_at IS NULL AND COALESCE(situation,'1')='1' LIMIT 100").all(producer.id).map(row => row.access_key)
+  // SEFAZ_MANIFESTAR=0 desliga o envio automático (útil para testar só a consulta).
+  // Com período escolhido, só as notas emitidas nele recebem a ciência.
+  const pending = process.env.SEFAZ_MANIFESTAR === '0' ? [] : db.prepare("SELECT access_key,issue_date FROM sefaz_summaries WHERE producer_id=? AND imported=0 AND manifested_at IS NULL AND COALESCE(situation,'1')='1' ORDER BY issue_date LIMIT 500").all(producer.id).filter(row => inPeriod(period, row.issue_date)).slice(0, 100).map(row => row.access_key)
   const saveManifest = db.prepare('UPDATE sefaz_summaries SET manifested_at=?,manifest_status=? WHERE producer_id=? AND access_key=?')
   for (let start = 0; start < pending.length; start += 20) {
     try {

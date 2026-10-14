@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Sprout, LayoutDashboard, Users, Tractor, UserRound, Upload, LogOut, FileText, X, Menu, PanelLeftClose, PanelLeftOpen, BarChart3, TableProperties } from "lucide-react";
+import { Sprout, LayoutDashboard, Users, Tractor, UserRound, Upload, LogOut, FileText, X, Menu, PanelLeftClose, PanelLeftOpen, UserCog, BarChart3, TableProperties } from "lucide-react";
 import { CompanySwitcher } from "./CompanyControls";
 import { api } from "./api";
-import { ThemeToggle } from "./components";
+import { ThemeToggle, GlobalProgress } from "./components";
 import { UserManagement } from "./pages/Users";
 import { Dashboard } from "./pages/Dashboard";
 import { Crud } from "./pages/Registry";
@@ -38,7 +38,7 @@ export function Shell({ user, onLogout, theme, onThemeToggle }) {
     [sidebarCollapsed, setSidebarCollapsed] = useState(
       () => localStorage.getItem("sidebar-collapsed") === "true",
     );
-  const availableNav = user.is_admin ? [...nav, ["users", "Usuários", Users]] : nav;
+  const availableNav = user.is_admin ? [...nav, ["users", "Usuários", UserCog]] : nav;
   const page = availableNav.some(([id]) => id === requestedPage) ? requestedPage : "dashboard";
   useEffect(() => {
     const sync = () => setRequestedPage(pageFromHash());
@@ -64,7 +64,8 @@ export function Shell({ user, onLogout, theme, onThemeToggle }) {
           <span>
             <Sprout />
           </span>
-          <b>Campo Certo</b>
+          <b className="side-label">Campo Certo</b>
+          {/* Aberta: botão à direita do nome. Minimizada: aparece sobre o logo ao passar o mouse. */}
           <button
             className="sidebar-toggle"
             type="button"
@@ -75,7 +76,7 @@ export function Shell({ user, onLogout, theme, onThemeToggle }) {
           >
             {sidebarCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
           </button>
-          <button className="close" onClick={() => setOpen(false)}>
+          <button className="close" onClick={() => setOpen(false)} aria-label="Fechar menu">
             <X />
           </button>
         </div>
@@ -84,28 +85,33 @@ export function Shell({ user, onLogout, theme, onThemeToggle }) {
             <button
               key={id}
               className={page === id ? "active" : ""}
-              title={sidebarCollapsed ? label : undefined}
+              data-tip={label}
+              aria-label={label}
               onClick={() => {
                 setPage(id);
                 setOpen(false);
               }}
             >
               <Icon />
-              {label}
+              <span className="side-label">{label}</span>
             </button>
           ))}
         </nav>
-        <div className="account">
-          <div className="avatar">{user.name.slice(0, 2).toUpperCase()}</div>
-          <div>
-            <b>{user.name}</b>
-            <small>{user.email}</small>
+        <div className="side-footer">
+          <div className="account" data-tip={`${user.name} · ${user.email}`}>
+            <div className="avatar">{user.name.slice(0, 2).toUpperCase()}</div>
+            <div className="side-label">
+              <b>{user.name}</b>
+              <small>{user.email}</small>
+            </div>
           </div>
-          <button title="Sair" onClick={onLogout}>
+          <button className="logout" type="button" data-tip="Sair" aria-label="Sair" onClick={onLogout}>
             <LogOut />
+            <span className="side-label">Sair</span>
           </button>
         </div>
       </aside>
+      <GlobalProgress />
       <main className="content">
         <header>
           <button
@@ -139,12 +145,13 @@ export function useData() {
     producers: [],
     farms: [],
     participants: [],
+    loaded: false,
   });
   const reload = () =>
     Promise.all(
       ["producers", "farms", "participants"].map((k) => api("/" + k)),
     ).then(([producers, farms, participants]) =>
-      setData({ producers, farms, participants }),
+      setData({ producers, farms, participants, loaded: true }),
     );
   useEffect(() => {
     reload();
@@ -158,6 +165,7 @@ export function Page({ id, navigate, user }) {
   if (id === "producers")
     return (
       <Crud
+        loading={!data.loaded}
         type="producers"
         title="Produtores rurais"
         items={data.producers}
@@ -167,6 +175,7 @@ export function Page({ id, navigate, user }) {
   if (id === "farms")
     return (
       <Crud
+        loading={!data.loaded}
         type="farms"
         title="Fazendas"
         items={data.farms}
@@ -177,6 +186,7 @@ export function Page({ id, navigate, user }) {
   if (id === "participants")
     return (
       <Crud
+        loading={!data.loaded}
         type="participants"
         title="Participantes"
         items={data.participants}

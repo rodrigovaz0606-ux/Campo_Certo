@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Plus, Trash2, FileText, CheckCircle2, X, Download, Eye, Filter } from "lucide-react";
 import { money, maskIe } from "../format";
 import { api, invoiceXml } from "../api";
-import { CurrencyInput, Modal, ConfirmDialog, Empty } from "../components";
+import { CurrencyInput, Modal, ConfirmDialog, Empty, Loading, Spinner } from "../components";
 import { AttachmentsButton, uploadAttachments, checkAttachmentFiles, attachmentAccept } from "./Attachments";
 
 export function ExportMenu({ row }) {
@@ -80,10 +80,11 @@ export function ExportMenu({ row }) {
 
 export function DanfePreview({ xml, close }) {
   const content = useRef(null);
+  const [ready, setReady] = useState(false);
   useEffect(() => {
     let active = true;
     import("../danfe.js").then(({ renderDanfePreview }) => {
-      if (active && content.current) renderDanfePreview(content.current, xml);
+      if (active && content.current) { renderDanfePreview(content.current, xml); setReady(true); }
     });
     return () => { active = false; };
   }, [xml]);
@@ -95,7 +96,7 @@ export function DanfePreview({ xml, close }) {
   return createPortal(<div className="danfe-preview-overlay" role="dialog" aria-modal="true" aria-label="Visualização da nota" onMouseDown={event => event.target === event.currentTarget && close()}>
     <div className="danfe-preview-modal">
       <div className="danfe-preview-head"><strong>Visualização da nota</strong><button type="button" onClick={close} aria-label="Fechar visualização"><X /></button></div>
-      <div className="danfe-preview-scroll"><div className="danfe-preview-page" ref={content} /></div>
+      <div className="danfe-preview-scroll">{!ready && <Loading text="Montando a visualização da nota..." />}<div className="danfe-preview-page" ref={content} hidden={!ready} /></div>
     </div>
   </div>, document.body);
 }
@@ -500,7 +501,7 @@ export function Conference({ data }) {
           {issueFilter && <button type="button" className="issue-clear" onClick={() => { setIssueFilter(""); setIssueIds(null); }}><X />Mostrar todas</button>}
         </div>}
         {loading ? (
-          <Empty text="Carregando notas..." />
+          <Loading text="Carregando notas..." />
         ) : producer && rows.length ? (
           <div className="table-wrap export-table">
             <datalist id="conference-participant-options">

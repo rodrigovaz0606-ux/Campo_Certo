@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Paperclip, Download, Trash2, Upload } from "lucide-react";
 import { api, downloadFile } from "../api";
 import { fileSize } from "../format";
-import { Modal } from "../components";
+import { Modal, Loading, Spinner } from "../components";
 
 export const attachmentAccept = "application/pdf,image/jpeg,image/png,image/webp";
 export const maxAttachmentBytes = 10 * 1024 * 1024;
@@ -62,7 +62,7 @@ function AttachmentsModal({ row, close, onChange }) {
   const download = (item) => downloadFile(`/attachments/${item.id}`, item.filename).catch((e) => setError(e.message));
   return <Modal title={`Comprovantes · ${row.invoice_number || "lançamento"}`} eyebrow="ANEXOS" close={close}>
     <div className="attachments">
-      {items === null ? <p className="muted">Carregando...</p> : items.length ? <ul className="attachment-list">
+      {items === null ? <Loading text="Carregando comprovantes..." /> : items.length ? <ul className="attachment-list">
         {items.map((item) => <li key={item.id}>
           <Paperclip />
           <div><b>{item.filename}</b><small>{fileSize(item.size)} · {new Date(item.created_at + "Z").toLocaleDateString("pt-BR")}</small></div>
@@ -72,7 +72,7 @@ function AttachmentsModal({ row, close, onChange }) {
       </ul> : <p className="muted">Nenhum comprovante anexado ainda.</p>}
       {error && <div className="error">{error}</div>}
       <label className={`outline attachment-upload${busy ? " disabled" : ""}`}>
-        <Upload />{busy ? "Enviando..." : "Anexar PDF ou imagem"}
+        {busy ? <Spinner /> : <Upload />}{busy ? "Enviando..." : "Anexar PDF ou imagem"}
         <input type="file" multiple accept={attachmentAccept} disabled={busy} onChange={add} />
       </label>
       <small className="field-help">Até 10 MB por arquivo. Os anexos entram no backup automático.</small>

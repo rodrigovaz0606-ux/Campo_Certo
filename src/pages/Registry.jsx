@@ -1,8 +1,8 @@
-import { useState } from "react";
-import { Plus, Trash2, Search, Pencil } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Trash2, Search, Pencil, SearchCheck } from "lucide-react";
 import { maskDoc, maskCpf, maskIe, formatAddress } from "../format";
 import { api } from "../api";
-import { MaskedNumberInput, AddressFields, Modal, ConfirmDialog, Empty } from "../components";
+import { MaskedNumberInput, AddressFields, Modal, ConfirmDialog, Empty, Loading } from "../components";
 import { CertificateButton } from "./Sefaz";
 
 export const fields = {
@@ -16,7 +16,8 @@ export const fields = {
   ],
 };
 
-export function Crud({ type, title, items, producers, reload }) {
+const PAGE_SIZE = 100;
+export function Crud({ type, title, items, producers, reload, loading = false }) {
   const [show, setShow] = useState(false),
     [editing, setEditing] = useState(null),
     [error, setError] = useState(""),
@@ -24,26 +25,87 @@ export function Crud({ type, title, items, producers, reload }) {
     [ownership, setOwnership] = useState("unique"),
     [partners, setPartners] = useState([{ document: "", share: "" }]);
   const [pendingDelete, setPendingDelete] = useState(null);
-  const filtered = items.filter((i) =>
-    JSON.stringify(i).toLowerCase().includes(search.toLowerCase()),
-  );
+  // Consulta da inscrição na SEFAZ: o resultado preenche o formulário (que é remontado com os novos valores).
+  const formRef = useRef(null);
+  const [draft, setDraft] = useState(null), [formVersion, setFormVersion] = useState(0);
+  const [lookup, setLookup] = useState(null), [lookupBusy, setLookupBusy] = useState(false), [lookupError, setLookupError] = useState(""), [lookupUf, setLookupUf] = useState("GO");
+  const lookedUp = useRef("");
+  const resetLookup = () => { setDraft(null); setLookup(null); setLookupError(""); lookedUp.current = ""; };
+  const holderProducer = (result) => producers?.find((item) => item.cpf === result?.document);
+  const lookupRegistration = async () => {
+    const current = Object.fromEntries(new FormData(formRef.current));
+    lookedUp.current = String(current.state_registration || "").replace(/\D/g, "");
+    setLookupBusy(true); setLookupError(""); setLookup(null);
+    try {
+      const result = await api("/cadastro/consulta", { method: "POST", body: JSON.stringify({ ie: current.state_registration, uf: lookupUf, producer_id: current.producer_id || null }) });
+      const a = result.address;
+      // Sem produtor escolhido, seleciona o titular quando ele já está cadastrado como produtor.
+      const owner = holderProducer(result);
+      setDraft({ ...current, producer_id: current.producer_id || owner?.id || "", name: current.name || result.tradeName || "", address: a.street || current.address, address_number: a.number || current.address_number, complement: a.complement || current.complement, neighborhood: a.neighborhood || current.neighborhood, zip_code: a.zipCode || current.zip_code });
+      setFormVersion((v) => v + 1);
+      setLookup(result);
+    } catch (e) { setLookupError(e.message); }
+    finally { setLookupBusy(false); }
+  };
+  // Consulta sozinha ao sair do campo da inscrição (ou Enter), quando a inscrição é nova e tem tamanho válido.
+  const autoLookup = (event) => {
+    if (event.target.name !== "state_registration" || lookupBusy) return;
+    const ie = event.target.value.replace(/\D/g, "");
+    if (ie.length < 8 || ie === lookedUp.current || ie === (editing?.state_registration || "")) return;
+    lookupRegistration();
+  };
+  const useHolderAsProducer = () => {
+    const current = Object.fromEntries(new FormData(formRef.current));
+    setDraft({ ...current, producer_id: holderProducer(lookup).id });
+    setFormVersion((v) => v + 1);
+  };
+  const holderRelation = () => {
+    if (!lookup) return null;
+    const producerId = draft?.producer_id || editing?.producer_id;
+    const producerCpf = producers?.find((item) => String(item.id) === String(producerId))?.cpf;
+    if (producerCpf && lookup.document === producerCpf) return { ok: true, text: "O titular é o produtor selecionado." };
+    if (partners.some((partner) => partner.document.replace(/\D/g, "") === lookup.document)) return { ok: true, text: "O titular é um dos sócios desta fazenda." };
+    const owner = holderProducer(lookup);
+    if (owner) return { ok: false, text: `O titular é ${owner.name}, que está cadastrado como outro produtor.`, owner };
+    return { ok: false, text: "O titular da inscrição na SEFAZ não é o produtor selecionado nem um sócio cadastrado. Confira antes de salvar." };
+  };
+  // O texto de busca de cada cadastro é montado uma vez; a lista mostra 100 por vez (a busca considera todos).
+  const searchable = useMemo(() => items.map((item) => [item, JSON.stringify(item).toLowerCase()]), [items]);
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return term ? searchable.filter(([, text]) => text.includes(term)).map(([item]) => item) : items;
+  }, [searchable, items, search]);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  useEffect(() => setVisibleCount(PAGE_SIZE), [search, type]);
   const openNew = () => {
-    setEditing(null); setError(""); setOwnership("unique"); setPartners([{ document: "", share: "" }]); setShow(true);
+    setEditing(null); setError(""); setOwnership("unique"); setPartners([{ document: "", share: "" }]); resetLookup(); setShow(true);
   };
   const openEdit = (item) => {
-    setEditing(item); setError(""); setOwnership(item.ownership_type || "unique");
+    setEditing(item); setError(""); setOwnership(item.ownership_type || "unique"); resetLookup();
     setPartners(item.partners?.length ? item.partners.map(p => ({ document: maskCpf(p.document), share: String(p.share) })) : [{ document: "", share: "" }]);
     setShow(true);
   };
-  const closeModal = () => { setShow(false); setEditing(null); setError(""); };
+  const closeModal = () => { setShow(false); setEditing(null); setError(""); resetLookup(); };
   const submit = async (e) => {
     e.preventDefault();
     setError("");
     try {
-      await api(`/${type}${editing ? `/${editing.id}` : ""}`, {
+      const values = Object.fromEntries(new FormData(e.currentTarget));
+      const saved = await api(`/${type}${editing ? `/${editing.id}` : ""}`, {
         method: editing ? "PUT" : "POST",
-        body: JSON.stringify(Object.fromEntries(new FormData(e.currentTarget))),
+        body: JSON.stringify(values),
       });
+      // Guarda o município (código IBGE) vindo da SEFAZ nos dados do LCDPR da fazenda, sem sobrescrever o que já existe.
+      if (type === "farms" && lookup?.address?.cityCode && saved?.id) {
+        try {
+          const lcdpr = await api(`/lcdpr/settings?producer_id=${values.producer_id}`);
+          const current = lcdpr.settings.imoveis?.[saved.id] || {};
+          if (!current.cod_mun) {
+            const settings = { ...lcdpr.settings, imoveis: { ...lcdpr.settings.imoveis, [saved.id]: { ...current, cod_mun: lookup.address.cityCode, uf: current.uf || lookup.uf } } };
+            await api("/lcdpr/settings", { method: "PUT", body: JSON.stringify({ producer_id: Number(values.producer_id), settings, accountant: lcdpr.accountant }) });
+          }
+        } catch { /* complemento opcional: não impede o cadastro */ }
+      }
       closeModal();
       reload();
     } catch (e) {
@@ -75,7 +137,7 @@ export function Crud({ type, title, items, producers, reload }) {
             placeholder="Buscar por nome ou documento..."
           />
         </div>
-        {filtered.length ? (
+        {loading ? <Loading text={`Carregando ${title.toLowerCase()}...`} /> : filtered.length ? (
           <div className="table-wrap" tabIndex={0} role="region" aria-label={`Lista de ${title.toLowerCase()}, com rolagem`}>
             <table>
               <thead>
@@ -100,7 +162,7 @@ export function Crud({ type, title, items, producers, reload }) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((i) => (
+                {filtered.slice(0, visibleCount).map((i) => (
                   <tr key={i.id}>
                     {type === "farms" ? (
                       <>
@@ -150,6 +212,10 @@ export function Crud({ type, title, items, producers, reload }) {
                 ))}
               </tbody>
             </table>
+            {filtered.length > visibleCount && <div className="load-more">
+              <span>Mostrando {visibleCount.toLocaleString("pt-BR")} de {filtered.length.toLocaleString("pt-BR")}. Use a busca para encontrar um cadastro específico.</span>
+              <button type="button" onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}>Mostrar mais</button>
+            </div>}
           </div>
         ) : (
           <Empty text="Nenhum cadastro encontrado." />
@@ -160,12 +226,12 @@ export function Crud({ type, title, items, producers, reload }) {
           title={`${editing ? "Editar" : "Novo"} ${type === "farms" ? "cadastro de fazenda" : type === "producers" ? "produtor rural" : "participante"}`}
           close={closeModal}
         >
-          <form key={editing?.id || "new"} onSubmit={submit} className="modal-form">
+          <form key={`${editing?.id || "new"}-${formVersion}`} ref={formRef} onSubmit={submit} className="modal-form">
             {type === "farms" ? (
               <>
                 <label>
                   Produtor responsável
-                  <select name="producer_id" required defaultValue={editing?.producer_id || ""}>
+                  <select name="producer_id" required defaultValue={draft?.producer_id || editing?.producer_id || ""}>
                     <option value="" disabled>
                       Selecione o produtor
                     </option>
@@ -178,14 +244,25 @@ export function Crud({ type, title, items, producers, reload }) {
                 </label>
                 <label>
                   Nome da fazenda
-                  <input name="name" required defaultValue={editing?.name || ""} />
+                  <input name="name" required defaultValue={draft?.name ?? editing?.name ?? ""} />
                 </label>
                 <label>
                   Inscrição Estadual
-                  <MaskedNumberInput name="state_registration" kind="ie" placeholder="Digite ou cole de 8 a 14 números" defaultValue={editing?.state_registration} />
-                  <small className="field-help">Aceita de 8 a 14 dígitos. São Paulo utiliza 12 dígitos.</small>
+                  <div className="ie-lookup" onBlur={autoLookup} onKeyDown={(e) => { if (e.key === "Enter" && e.target.name === "state_registration") { e.preventDefault(); autoLookup(e); } }}>
+                    <MaskedNumberInput name="state_registration" kind="ie" placeholder="Digite ou cole de 8 a 14 números" defaultValue={draft?.state_registration ?? editing?.state_registration} />
+                    <select aria-label="UF da inscrição" value={lookupUf} onChange={(e) => setLookupUf(e.target.value)}>{["GO", "MT", "MS", "MG", "SP", "PR", "RS", "BA", "PE"].map((uf) => <option key={uf}>{uf}</option>)}</select>
+                    <button type="button" className="outline" disabled={lookupBusy} onClick={lookupRegistration}><SearchCheck />{lookupBusy ? "Consultando..." : "Buscar na SEFAZ"}</button>
+                  </div>
+                  <small className="field-help">Aceita de 8 a 14 dígitos. São Paulo utiliza 12 dígitos. A busca preenche o endereço com o cadastro da SEFAZ (base do Sintegra).</small>
                 </label>
-                <AddressFields item={editing || {}} />
+                {lookupError && <div className="error">{lookupError}</div>}
+                {lookup && (() => { const relation = holderRelation(); return <div className={`ie-result${lookup.active ? "" : " inactive"}`}>
+                  <b>{lookup.active ? "Inscrição habilitada" : `Inscrição ${lookup.situation.toLowerCase()}`}{lookup.closedDate ? ` (baixada em ${lookup.closedDate.split("-").reverse().join("/")})` : ""}</b>
+                  <span>Titular: {lookup.name} · {maskDoc(lookup.document)} · {lookup.address.city}/{lookup.uf}</span>
+                  {relation && <span className={relation.ok ? "" : "ie-warning"}>{relation.text}{relation.owner && <button type="button" className="ie-switch" onClick={useHolderAsProducer}>Usar {relation.owner.name} como produtor</button>}</span>}
+                  <small>Endereço preenchido com os dados da SEFAZ; confira e ajuste se precisar. Consulta feita com o certificado {lookup.certificate_used === "produtor" ? "do produtor" : "do escritório"}.</small>
+                </div>; })()}
+                <AddressFields item={draft || editing || {}} />
                 <label>
                   Tipo de propriedade
                   <select name="ownership_type" required value={ownership} onChange={(e) => setOwnership(e.target.value)}>

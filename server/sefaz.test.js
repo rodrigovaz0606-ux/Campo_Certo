@@ -84,6 +84,13 @@ async function startFakeSefaz() {
           : `<retDistDFeInt xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><tpAmb>1</tpAmb><cStat>137</cStat><xMotivo>Nenhum documento localizado</xMotivo><ultNSU>000000000000002</ultNSU><maxNSU>000000000000002</maxNSU></retDistDFeInt>`
         return res.end(`<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body><nfeDistDFeInteresseResponse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe"><nfeDistDFeInteresseResult>${ret}</nfeDistDFeInteresseResult></nfeDistDFeInteresseResponse></soap:Body></soap:Envelope>`)
       }
+      if (req.url === '/cadastro') {
+        const ie = body.match(/<IE>(\d+)<\/IE>/)?.[1]
+        calls.cadastro = [...(calls.cadastro || []), { clientCn, ie }]
+        const info = ie === '999999999' ? '<cStat>259</cStat><xMotivo>Rejeição: IE da consulta não cadastrada como contribuinte na UF</xMotivo>'
+          : `<cStat>111</cStat><xMotivo>Consulta cadastro com uma ocorrência</xMotivo><infCad><IE>${ie}</IE><CPF>${CPF}</CPF><UF>GO</UF><cSit>1</cSit><xNome>PRODUTOR TESTE</xNome><CNAE>151201</CNAE><ender><xLgr>RODOVIA GO 164 KM 326</xLgr><nro>S/N</nro><xBairro>ZONA RURAL</xBairro><cMun>5214838</cMun><xMun>NOVA CRIXAS</xMun><CEP>76520000</CEP></ender></infCad>`
+        return res.end(`<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body><nfeResultMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/CadConsultaCadastro4"><retConsCad xmlns="http://www.portalfiscal.inf.br/nfe" versao="2.00"><infCons><verAplic>1</verAplic>${info}<UF>GO</UF><IE>${ie}</IE><dhCons>2026-10-14T10:00:00-03:00</dhCons><cUF>52</cUF></infCons></retConsCad></nfeResultMsg></soap:Body></soap:Envelope>`)
+      }
       const keys = [...body.matchAll(/<chNFe>(\d{44})<\/chNFe>/g)].map(m => m[1])
       calls.evento.push({ clientCn, keys, signed: body.includes('<SignatureValue>') })
       const events = keys.map(key => `<retEvento versao="1.00"><infEvento><tpAmb>1</tpAmb><cStat>135</cStat><xMotivo>Evento registrado e vinculado a NF-e</xMotivo><chNFe>${key}</chNFe></infEvento></retEvento>`).join('')
@@ -96,7 +103,7 @@ async function startFakeSefaz() {
 }
 
 async function startApp(dir, sefazUrl, caFile) {
-  const child = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DATA_DIR: dir, JWT_SECRET: 'test-only-secret-not-for-production-12345678', NODE_ENV: 'test', HOST: '127.0.0.1', PORT: '0', BACKUP_DISABLED: '1', SEFAZ_DIST_URL: `${sefazUrl}/dist`, SEFAZ_EVENTO_URL: `${sefazUrl}/evento`, SEFAZ_CA_FILE: caFile }, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, DATA_DIR: dir, JWT_SECRET: 'test-only-secret-not-for-production-12345678', NODE_ENV: 'test', HOST: '127.0.0.1', PORT: '0', BACKUP_DISABLED: '1', SEFAZ_DIST_URL: `${sefazUrl}/dist`, SEFAZ_EVENTO_URL: `${sefazUrl}/evento`, CADASTRO_URL_GO: `${sefazUrl}/cadastro`, SEFAZ_CA_FILE: caFile }, stdio: ['ignore', 'pipe', 'pipe'] })
   let log = ''
   child.stderr.on('data', chunk => { log += chunk })
   const url = await new Promise((resolve, reject) => {
@@ -153,4 +160,78 @@ test('busca na SEFAZ: importa a nota completa, registra a ciência do resumo e r
   assert.equal(status.state.ult_nsu, '000000000000002')
   assert.equal(status.pending, 1)
   assert.equal(status.certificate.holder_name, 'PRODUTOR TESTE')
+})
+
+test('busca por período: importa só as notas do período e guarda as outras para depois', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'campo-sefaz-periodo-'))
+  const caFile = path.join(dir, 'ca.pem')
+  fs.writeFileSync(caFile, forge.pki.certificateToPem(ca.cert))
+  const { fake, calls, url: sefazUrl } = await startFakeSefaz()
+  const app = await startApp(dir, sefazUrl, caFile)
+  t.after(async () => { await app.stop(); fake.close(); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) })
+  const call = async (endpoint, token, { method = 'GET', body, form } = {}) => {
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    if (body) headers['Content-Type'] = 'application/json'
+    const response = await fetch(`${app.url}/api${endpoint}`, { method, headers, body: form || (body && JSON.stringify(body)) })
+    return { status: response.status, data: await response.json().catch(() => null) }
+  }
+  const token = (await call('/auth/register', null, { method: 'POST', body: { name: 'Admin', email: 'a@t.local', password: 'teste123' } })).data.token
+  const producer = (await call('/producers', token, { method: 'POST', body: { name: 'Produtor Teste', cpf: CPF, address: 'Rua', address_number: '1', zip_code: '76530000', neighborhood: 'Centro' } })).data
+  const form = new FormData(); form.append('file', new Blob([pfx]), 'produtor.pfx'); form.append('password', 'senha123'); form.append('uf', 'GO')
+  assert.equal((await call(`/producers/${producer.id}/certificate`, token, { method: 'PUT', form })).status, 200)
+
+  assert.equal((await call('/sefaz/sync', token, { method: 'POST', body: { producer_id: producer.id, from: '2025-04-30', to: '2025-04-01' } })).status, 400)
+  const april = await call('/sefaz/sync', token, { method: 'POST', body: { producer_id: producer.id, from: '2025-04-01', to: '2025-04-30' } })
+  assert.equal(april.status, 200, JSON.stringify(april.data))
+  assert.equal(april.data.imported, 0)
+  assert.equal(april.data.outOfPeriod, 1)
+  assert.equal(april.data.manifested, 0) // o resumo é de março: fora do período, sem ciência
+  assert.deepEqual(calls.evento, [])
+  let status = (await call(`/sefaz/status?producer_id=${producer.id}`, token)).data
+  assert.deepEqual(status.stored, { total: 1, first_date: '2025-03-03', last_date: '2025-03-03' })
+  assert.equal((await call(`/invoices?producer_id=${producer.id}&year=2025`, token)).data.length, 0)
+
+  // Importa a guardada escolhendo março, sem consultar a SEFAZ de novo.
+  const march = await call('/sefaz/import-stored', token, { method: 'POST', body: { producer_id: producer.id, from: '2025-03-01', to: '2025-03-31' } })
+  assert.deepEqual(march.data, { imported: 1, duplicates: 0, errors: [], remaining: 0 })
+  assert.equal(calls.dist.length, 1)
+  status = (await call(`/sefaz/status?producer_id=${producer.id}`, token)).data
+  assert.equal(status.stored.total, 0)
+  assert.equal((await call(`/invoices?producer_id=${producer.id}&year=2025`, token)).data.length, 1)
+})
+
+test('consulta da inscrição estadual: usa o certificado do produtor ou o do escritório e trata recusas', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'campo-cadastro-'))
+  const caFile = path.join(dir, 'ca.pem')
+  fs.writeFileSync(caFile, forge.pki.certificateToPem(ca.cert))
+  const { fake, calls, url: sefazUrl } = await startFakeSefaz()
+  const app = await startApp(dir, sefazUrl, caFile)
+  t.after(async () => { await app.stop(); fake.close(); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) })
+  const call = async (endpoint, token, { method = 'GET', body, form } = {}) => {
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    if (body) headers['Content-Type'] = 'application/json'
+    const response = await fetch(`${app.url}/api${endpoint}`, { method, headers, body: form || (body && JSON.stringify(body)) })
+    return { status: response.status, data: await response.json().catch(() => null) }
+  }
+  const pfxForm = () => { const form = new FormData(); form.append('file', new Blob([pfx]), 'certificado.pfx'); form.append('password', 'senha123'); form.append('uf', 'GO'); return form }
+  const token = (await call('/auth/register', null, { method: 'POST', body: { name: 'Admin', email: 'a@t.local', password: 'teste123' } })).data.token
+  const producer = (await call('/producers', token, { method: 'POST', body: { name: 'Produtor Teste', cpf: CPF, address: 'Rua', address_number: '1', zip_code: '76530000', neighborhood: 'Centro' } })).data
+
+  assert.match((await call('/cadastro/consulta', token, { method: 'POST', body: { ie: '111211212', uf: 'GO' } })).data.error, /cadastre o certificado/)
+  assert.equal((await call('/office-certificate', token, { method: 'PUT', form: pfxForm() })).status, 200)
+  const byOffice = await call('/cadastro/consulta', token, { method: 'POST', body: { ie: '111.211.212', uf: 'GO' } })
+  assert.equal(byOffice.status, 200, JSON.stringify(byOffice.data))
+  assert.equal(byOffice.data.certificate_used, 'escritorio')
+  assert.equal(byOffice.data.active, true)
+  assert.equal(byOffice.data.document, CPF)
+  assert.deepEqual(byOffice.data.address, { street: 'RODOVIA GO 164 KM 326', number: 'S/N', complement: '', neighborhood: 'ZONA RURAL', cityCode: '5214838', city: 'NOVA CRIXAS', zipCode: '76520000' })
+  assert.deepEqual(calls.cadastro[0], { clientCn: `PRODUTOR TESTE:${CPF}`, ie: '111211212' })
+
+  assert.equal((await call(`/producers/${producer.id}/certificate`, token, { method: 'PUT', form: pfxForm() })).status, 200)
+  assert.equal((await call('/cadastro/consulta', token, { method: 'POST', body: { ie: '111211212', uf: 'GO', producer_id: producer.id } })).data.certificate_used, 'produtor')
+  assert.equal((await call('/cadastro/consulta', token, { method: 'POST', body: { ie: '123', uf: 'GO' } })).status, 400)
+  const refused = await call('/cadastro/consulta', token, { method: 'POST', body: { ie: '999999999', uf: 'GO' } })
+  assert.equal(refused.status, 422)
+  assert.match(refused.data.error, /não cadastrada como contribuinte.*código 259/)
+  assert.match((await call('/cadastro/consulta', token, { method: 'POST', body: { ie: '111211212', uf: 'AC' } })).data.error, /não oferece a consulta/)
 })

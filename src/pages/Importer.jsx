@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Upload, CheckCircle2 } from "lucide-react";
 import { api } from "../api";
 import { SefazPanel } from "./Sefaz";
+import { Spinner } from "../components";
 
 export function Importer({ data }) {
   const [files, setFiles] = useState([]),
@@ -125,7 +126,7 @@ export function Importer({ data }) {
           className="primary import-submit"
           disabled={loading || !data.producers.length}
         >
-          {loading ? `Importando... ${processed} de ${files.length}` : "Importar e processar notas"}
+          {loading ? <><Spinner />{`Importando... ${processed} de ${files.length}`}</> : "Importar e processar notas"}
         </button>
       </form>
       <SefazPanel data={data} />

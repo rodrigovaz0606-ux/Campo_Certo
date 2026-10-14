@@ -3,7 +3,8 @@ import { Trash2, CheckCircle2, Download, Pencil } from "lucide-react";
 import { CompanyManagement } from "../CompanyControls";
 import { fileSize } from "../format";
 import { api } from "../api";
-import { Modal, ConfirmDialog } from "../components";
+import { Modal, ConfirmDialog, Spinner } from "../components";
+import { OfficeCertificatePanel } from "./Sefaz";
 
 export function UserManagement({ currentUser }) {
   const [users, setUsers] = useState([]);
@@ -41,6 +42,7 @@ export function UserManagement({ currentUser }) {
     <div className="toolbar"><div><h1>Usuários</h1><p>Somente o administrador pode criar acessos ao Campo Certo.</p></div></div>
     <CompanyManagement api={api} companies={companies} onChange={load} ConfirmDialog={ConfirmDialog} />
     <BackupPanel />
+    <OfficeCertificatePanel />
     <div className="user-management">
       <form className="list-card user-create" onSubmit={submit}>
         <h3>Novo usuário</h3>
@@ -87,7 +89,7 @@ export function BackupPanel() {
         <h3>Backups automáticos</h3>
         <p>O servidor copia todos os bancos (usuários e empresas) uma vez por dia e guarda as cópias mais recentes.</p>
       </div>
-      <button className="outline compact" type="button" disabled={busy} onClick={runNow}><Download />{busy ? "Copiando..." : "Fazer backup agora"}</button>
+      <button className="outline compact" type="button" disabled={busy} onClick={runNow}>{busy ? <Spinner /> : <Download />}{busy ? "Copiando..." : "Fazer backup agora"}</button>
     </div>
     {state && <div className={`backup-status ${ageHours < 26 ? "ok" : "late"}`}>
       {latest ? <><CheckCircle2 /><span>Último backup em <b>{new Date(latest.created_at).toLocaleString("pt-BR")}</b> · {fileSize(latest.size)} · {state.items.length} cópia(s) guardada(s)</span></>

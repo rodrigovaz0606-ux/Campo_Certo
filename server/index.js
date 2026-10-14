@@ -11,7 +11,9 @@ import { parseInvoiceXml } from './xml.js'
 import { identityRoutes } from './identity.js'
 import { backupRoot, listBackups, runBackup, startBackupSchedule } from './backup.js'
 import { buildLcdpr, mergeSettings, defaultAccountant, LCDPR_LAYOUT_VERSION } from './lcdpr.js'
-import { readCertificate, sealCertificate, openCertificate, syncProducer, sefazStatus, UF_CODES } from './sefaz.js'
+import { validateLcdpr } from './lcdpr-validator.js'
+import { readCertificate, sealCertificate, openCertificate, syncProducer, importStored, sefazStatus, UF_CODES } from './sefaz.js'
+import { consultaCadastro } from './cadastro.js'
 
 const app = express()
 const port = Number(process.env.PORT || 3333)
@@ -263,6 +265,49 @@ app.get('/api/sefaz/status', (req, res) => {
   const certificate = req.db.prepare('SELECT holder_name,holder_document,valid_until,uf,created_at FROM certificates WHERE producer_id=?').get(producerId)
   res.json({ certificate: publicCertificate(certificate), ...sefazStatus(req.db, producerId) })
 })
+// Certificado do escritório e consulta de inscrição estadual na SEFAZ (base do Sintegra).
+const officeCertificateRow = database => database.prepare('SELECT holder_name,holder_document,valid_until,created_at FROM office_certificate WHERE id=1').get()
+app.get('/api/office-certificate', (req, res) => res.json(officeCertificateRow(req.db) || null))
+app.put('/api/office-certificate', adminOnly, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Selecione o arquivo .pfx ou .p12 do certificado.' })
+  let certificate
+  try { certificate = readCertificate(req.file.buffer, req.body.password) } catch (error) { return res.status(400).json({ error: error.message }) }
+  if (new Date(certificate.validUntil).getTime() < Date.now()) return res.status(400).json({ error: `Este certificado venceu em ${new Date(certificate.validUntil).toLocaleDateString('pt-BR')}.` })
+  req.db.prepare(`INSERT INTO office_certificate (id,sealed,holder_name,holder_document,valid_until,created_at) VALUES (1,?,?,?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET sealed=excluded.sealed,holder_name=excluded.holder_name,holder_document=excluded.holder_document,valid_until=excluded.valid_until,created_at=CURRENT_TIMESTAMP`)
+    .run(sealCertificate(req.file.buffer, req.body.password, secret), certificate.holderName, certificate.document, certificate.validUntil)
+  res.json(officeCertificateRow(req.db))
+})
+app.delete('/api/office-certificate', adminOnly, (req, res) => { req.db.prepare('DELETE FROM office_certificate WHERE id=1').run(); res.status(204).end() })
+app.post('/api/cadastro/consulta', asyncRoute(async (req, res) => {
+  // Usa o certificado do produtor, se houver; senão, o do escritório.
+  const producerId = Number(req.body.producer_id) || null
+  const own = producerId && req.db.prepare('SELECT sealed FROM certificates WHERE producer_id=?').get(producerId)
+  const office = !own && req.db.prepare('SELECT sealed FROM office_certificate WHERE id=1').get()
+  if (!own && !office) return res.status(400).json({ error: 'Para consultar a inscrição, cadastre o certificado A1 do produtor (Produtores, ícone de escudo) ou o certificado do escritório (Usuários).' })
+  try {
+    const certificate = openCertificate((own || office).sealed, secret)
+    const result = await consultaCadastro({ certificate, uf: req.body.uf || 'GO', ie: req.body.ie })
+    res.json({ ...result, certificate_used: own ? 'produtor' : 'escritorio' })
+  } catch (error) { res.status(error.status || 502).json({ error: error.message }) }
+}))
+
+// Período opcional da busca (datas de emissão). Devolve null quando não informado.
+const periodFrom = body => {
+  if (!body.from && !body.to) return null
+  const valid = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))
+  if (!valid(body.from) || !valid(body.to) || body.from > body.to) throw Object.assign(new Error('Informe um período válido (data inicial até a data final).'), { status: 400 })
+  return { from: body.from, to: body.to }
+}
+app.post('/api/sefaz/import-stored', (req, res) => {
+  const producer = req.db.prepare('SELECT id,cpf FROM producers WHERE id=?').get(Number(req.body.producer_id))
+  if (!producer) return res.status(404).json({ error: 'Produtor não encontrado.' })
+  const farmId = req.body.farm_id ? Number(req.body.farm_id) : null
+  if (farmId && !req.db.prepare('SELECT id FROM farms WHERE id=? AND producer_id=?').get(farmId, producer.id)) return res.status(400).json({ error: 'A fazenda selecionada não pertence ao produtor.' })
+  let period
+  try { period = periodFrom(req.body) } catch (error) { return res.status(400).json({ error: error.message }) }
+  res.json(importStored({ db: req.db, producer, period, importXml: invoiceImporter(req.db, producer, farmId) }))
+})
 const syncing = new Set()
 app.post('/api/sefaz/sync', asyncRoute(async (req, res) => {
   const producer = req.db.prepare('SELECT id,cpf,name FROM producers WHERE id=?').get(Number(req.body.producer_id))
@@ -277,7 +322,7 @@ app.post('/api/sefaz/sync', asyncRoute(async (req, res) => {
     const farmId = req.body.farm_id ? Number(req.body.farm_id) : null
     if (farmId && !req.db.prepare('SELECT id FROM farms WHERE id=? AND producer_id=?').get(farmId, producer.id)) return res.status(400).json({ error: 'A fazenda selecionada não pertence ao produtor.' })
     const importXml = invoiceImporter(req.db, producer, farmId)
-    res.json(await syncProducer({ db: req.db, producer, certificate, uf: row.uf, importXml }))
+    res.json(await syncProducer({ db: req.db, producer, certificate, uf: row.uf, importXml, period: periodFrom(req.body) }))
   } catch (error) {
     res.status(error.status || 400).json({ error: error.message })
   } finally { syncing.delete(lock) }
@@ -459,6 +504,8 @@ app.get('/api/lcdpr', (req, res) => {
     FROM invoices i LEFT JOIN participants pt ON pt.id=i.participant_id WHERE i.producer_id=? AND strftime('%Y',i.issue_date)=? ORDER BY i.issue_date,i.id`).all(context.producer.id, year)
   const names = new Map([...req.db.prepare('SELECT document,name FROM participants').all().map(row => [row.document, row.name]), ...req.db.prepare('SELECT cpf,name FROM producers').all().map(row => [row.cpf, row.name])])
   const result = buildLcdpr({ ...context, invoices, year, names })
+  // Todo arquivo gerado passa pelo validador do leiaute antes de ser liberado.
+  if (!result.errors.length) result.errors.push(...validateLcdpr(result.text).map(problem => `Formato: ${problem}`))
   res.status(result.errors.length ? 422 : 200).json({ ...result, version: LCDPR_LAYOUT_VERSION, text: result.errors.length ? '' : result.text })
 })
 
