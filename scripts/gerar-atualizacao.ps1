@@ -83,6 +83,17 @@ NOVIDADES DESTA VERSAO
   todo arquivo e conferido antes do download.
 - Cadastros mais rapidos (100 por vez, com "Mostrar mais") e indicadores de carregamento.
 - Barra lateral redesenhada: mais fluida, botao de recolher dentro da barra.
+- Usuarios: e-mail de usuario de empresa excluida pode ser cadastrado de novo; e-mail em uso mostra de quem e.
+- SEFAZ: notas so em resumo com mais de 10 dias nao recebem mais a ciencia (a SEFAZ recusa); a tela
+  avisa quantas sao para pedir o XML ao fornecedor. Erros agrupados por motivo.
+- LCDPR no modelo do programa do escritorio: escolha das propriedades, data inicial e final livres,
+  conta caixa, lancamentos por imovel e valores proporcionais a participacao. Cadastro da fazenda com
+  UF, municipio (codigo IBGE, preenchido pela busca na SEFAZ), NIRF e CAEPF (zerados por padrao).
+- Visualizar nota abre em janela separada (da para arrastar para o segundo monitor e ir conferindo).
+- Conferencia: coluna Movimentacao (Receita/Despesa da fazenda ou descricao livre) e tipo de documento
+  editavel.
+- Nova classificacao Combustivel (NCM 2710, 2711, 2207 etanol, 3826). As notas ja importadas como
+  "Outros" com esses NCMs sao reclassificadas uma unica vez.
 "@
 Set-Content -LiteralPath (Join-Path $stageRoot 'LEIA-ME-ATUALIZACAO.txt') -Value $readme -Encoding UTF8
 

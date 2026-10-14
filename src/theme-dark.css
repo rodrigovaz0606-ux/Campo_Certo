@@ -145,6 +145,8 @@
 :root[data-theme="dark"] .ncm-category-select.cattle { background: #382a21; color: #ddb595; }
 :root[data-theme="dark"] .ncm-category.soy,
 :root[data-theme="dark"] .ncm-category-select.soy { background: #283420; color: #b9d297; }
+:root[data-theme="dark"] .ncm-category.fuel,
+:root[data-theme="dark"] .ncm-category-select.fuel { background: #3a321c; color: #e3c97e; }
 :root[data-theme="dark"] .ncm-category.other,
 :root[data-theme="dark"] .ncm-category-select.other { background: #2a302c; color: #b6c0ba; }
 :root[data-theme="dark"] .manual-badge { background: #35301f; color: #d8c387; }
@@ -300,3 +302,6 @@
 :root[data-theme="dark"] .global-progress::before { background: var(--lime); }
 :root[data-theme="dark"] .loading-block .spinner { color: var(--accent); }
 :root[data-theme="dark"] .load-more button { background: var(--surface-2); border-color: var(--border-2); color: var(--accent); }
+:root[data-theme="dark"] .lcdpr-farm-option { border-color: var(--border-2); }
+:root[data-theme="dark"] .lcdpr-farm-option.checked { background: #1f3127; border-color: #2f4a3a; }
+:root[data-theme="dark"] .lcdpr-details, :root[data-theme="dark"] .farm-fiscal { border-color: var(--border-2); }

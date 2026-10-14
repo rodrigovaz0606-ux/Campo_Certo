@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { parseInvoiceXml } from './xml.js'
+import { parseInvoiceXml, classifyNcm } from './xml.js'
 import { ensureSefazTables } from './sefaz.js'
 
 export const dataDir = path.resolve(process.env.DATA_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data'))
@@ -70,6 +70,11 @@ for (const table of ['producers', 'farms']) {
     if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`)
   }
 }
+// Dados da fazenda usados no LCDPR (o escritório usa NIRF e CAEPF zerados quando não tem o número).
+const farmColumns = new Set(db.prepare('PRAGMA table_info(farms)').all().map(column => column.name))
+for (const [name, type] of [['nirf', "TEXT NOT NULL DEFAULT '00000000'"], ['caepf', "TEXT NOT NULL DEFAULT '00000000000000'"], ['uf', 'TEXT'], ['city_code', 'TEXT'], ['city_name', 'TEXT'], ['exploration_type', 'TEXT']]) {
+  if (!farmColumns.has(name)) db.exec(`ALTER TABLE farms ADD COLUMN ${name} ${type}`)
+}
 const invoiceColumns = new Set(db.prepare('PRAGMA table_info(invoices)').all().map(column => column.name))
 if (!invoiceColumns.has('operation_type')) db.exec('ALTER TABLE invoices ADD COLUMN operation_type TEXT')
 if (!invoiceColumns.has('ncm_codes')) db.exec('ALTER TABLE invoices ADD COLUMN ncm_codes TEXT')
@@ -79,6 +84,7 @@ if (!invoiceColumns.has('content_hash')) db.exec('ALTER TABLE invoices ADD COLUM
 if (!invoiceColumns.has('is_reviewed')) db.exec('ALTER TABLE invoices ADD COLUMN is_reviewed INTEGER NOT NULL DEFAULT 0')
 if (!invoiceColumns.has('is_manual')) db.exec('ALTER TABLE invoices ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0')
 if (!invoiceColumns.has('document_type')) db.exec("ALTER TABLE invoices ADD COLUMN document_type TEXT NOT NULL DEFAULT 'invoice'")
+if (!invoiceColumns.has('movement')) db.exec('ALTER TABLE invoices ADD COLUMN movement TEXT')
 if (!invoiceColumns.has('producer_state_registration')) db.exec('ALTER TABLE invoices ADD COLUMN producer_state_registration TEXT')
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_invoices_producer_date ON invoices(producer_id, issue_date);
@@ -130,6 +136,12 @@ const runOnce = (name, migrate) => {
   if (db.prepare('SELECT 1 FROM data_migrations WHERE name=?').get(name)) return
   db.transaction(() => { migrate(); db.prepare('INSERT INTO data_migrations(name) VALUES (?)').run(name) })()
 }
+// Notas de combustível importadas antes da categoria existir estavam como "Outros".
+runOnce('ncm-category-fuel', () => {
+  const rows = db.prepare("SELECT id,ncm_codes FROM invoices WHERE ncm_category='other' AND COALESCE(document_type,'invoice')='invoice' AND COALESCE(ncm_codes,'')<>''").all()
+  const save = db.prepare("UPDATE invoices SET ncm_category='fuel' WHERE id=?")
+  for (const row of rows) if (classifyNcm(row.ncm_codes.split(/\D+/).filter(Boolean)) === 'fuel') save.run(row.id)
+})
 // Preenche a quantidade de cabeças das notas de gado já importadas, sem tocar no que foi digitado.
 runOnce('cattle-quantity-from-xml', () => {
   const rows = db.prepare("SELECT id,xml_content FROM invoices WHERE is_manual=0 AND ncm_category='cattle' AND cattle_quantity IS NULL AND xml_content<>''").all()

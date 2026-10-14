@@ -50,6 +50,14 @@ test('anexa, lista, baixa e exclui comprovantes de um lançamento manual', async
   assert.equal(download.headers.get('content-type'), 'application/pdf')
   assert.deepEqual(Buffer.from(await download.arrayBuffer()), pdf)
 
+  // Na Conferência dá para trocar a fazenda, a movimentação e o tipo de documento; folha de pagamento não tem classificação de gado.
+  const farm = await json(await call('/farms', token, { method: 'POST', body: { producer_id: producer.id, name: 'Fazenda Teste', state_registration: '114083711', address: 'Rodovia', address_number: 'SN', zip_code: '76530000', neighborhood: 'Zona Rural', ownership_type: 'unique' } }))
+  assert.equal(farm.status, 201, JSON.stringify(farm.data))
+  const edited = await call(`/invoices/${entry.id}`, token, { method: 'PUT', body: { ...rows[0], farm_id: farm.data.id, document_type: 'payroll', ncm_category: 'cattle', cattle_quantity: 5, movement: ' Devolução de venda ' } })
+  assert.equal(edited.status, 200)
+  const after = (await json(await call(`/invoices?producer_id=${producer.id}&year=2025`, token))).data[0]
+  assert.deepEqual([after.farm_id, after.farm_name, after.document_type, after.ncm_category, after.cattle_quantity, after.movement], [farm.data.id, 'Fazenda Teste', 'payroll', 'other', null, 'Devolução de venda'])
+
   // Ao excluir o lançamento, os anexos vão junto.
   assert.equal((await call(`/invoices/${entry.id}`, token, { method: 'DELETE' })).status, 204)
   assert.equal((await call(`/attachments/${list[0].id}`, token)).status, 404)

@@ -4,6 +4,7 @@ import { Plus, Trash2, FileText, CheckCircle2, X, Download, Eye, Filter } from "
 import { money, maskIe } from "../format";
 import { api, invoiceXml } from "../api";
 import { CurrencyInput, Modal, ConfirmDialog, Empty, Loading, Spinner } from "../components";
+import { openPreviewWindow, showInPreviewWindow } from "../preview-window";
 import { AttachmentsButton, uploadAttachments, checkAttachmentFiles, attachmentAccept } from "./Attachments";
 
 export function ExportMenu({ row }) {
@@ -47,9 +48,15 @@ export function ExportMenu({ row }) {
     };
   }, [open]);
   const preview = async () => {
+    // A janela precisa ser aberta ainda no clique, senão o navegador bloqueia; se bloquear, usa a visualização na tela.
+    const win = openPreviewWindow(row);
     setBusy(true); setError("");
-    try { const response = await invoiceXml(row); setPreviewXml(await response.text()); }
-    catch (e) { setError(e.message); }
+    try {
+      const xml = await (await invoiceXml(row)).text();
+      if (win && !win.closed) await showInPreviewWindow(win, xml);
+      else setPreviewXml(xml);
+    }
+    catch (e) { setError(e.message); if (win && !win.closed) win.document.body.textContent = e.message; }
     finally { setBusy(false); }
   };
   const downloadXml = async () => {
@@ -71,7 +78,7 @@ export function ExportMenu({ row }) {
   return <><div className="export-wrap"><div className={`export-menu${open ? " open" : ""}`} ref={menuRef}>
     <button type="button" className="export-trigger" disabled={busy} aria-expanded={open} onClick={() => setOpen(value => !value)}><Download />{busy ? "Aguarde..." : "Exportar"}</button>
     {open && createPortal(<div className="export-options export-options-floating" ref={optionsRef} style={menuPosition} onClick={() => setOpen(false)}>
-      <button onClick={preview}><Eye /><span><b>Visualizar nota</b><small>Abrir conferência rápida</small></span></button>
+      <button onClick={preview}><Eye /><span><b>Visualizar nota</b><small>Abre em outra janela</small></span></button>
       <button onClick={downloadXml}><FileText /><span><b>XML original</b><small>Baixar arquivo fiscal</small></span></button>
       <button onClick={downloadDanfe}><Download /><span><b>DANFE em PDF</b><small>Gerar documento auxiliar</small></span></button>
     </div>, document.body)}
@@ -100,6 +107,11 @@ export function DanfePreview({ xml, close }) {
     </div>
   </div>, document.body);
 }
+
+// Movimentação: sugestões Receita/Despesa da fazenda, mas aceita qualquer descrição (Compras, Devolução de venda...).
+// Sem nada salvo, sugere pela operação: saída é receita, entrada é despesa.
+const MOVEMENT_OPTIONS = ["Receita da fazenda", "Despesa da fazenda"];
+const movementOf = (row) => row.movement || (row.operation_type === "incoming" ? MOVEMENT_OPTIONS[1] : MOVEMENT_OPTIONS[0]);
 
 export function ParticipantPicker({ participantId, participantName, choices, labelsById, onChoose }) {
   const currentLabel = labelsById.get(Number(participantId)) || participantName || "";
@@ -155,9 +167,9 @@ export function Conference({ data }) {
     [issueFilter, setIssueFilter] = useState(""),
     [manualFiles, setManualFiles] = useState([]),
     [issueIds, setIssueIds] = useState(null),
-    [manual, setManual] = useState({ producer_id: "", farm_id: "", participant_id: "", document_type: "invoice", issue_date: new Date().toISOString().slice(0, 10), invoice_number: "", amount: 0, operation_type: "outgoing", ncm_category: "other", cattle_quantity: "" }),
+    [manual, setManual] = useState({ producer_id: "", farm_id: "", participant_id: "", document_type: "invoice", issue_date: new Date().toISOString().slice(0, 10), invoice_number: "", amount: 0, operation_type: "outgoing", ncm_category: "other", cattle_quantity: "", movement: "" }),
     [columnFilters, setColumnFilters] = useState({
-      issue_date: "", producer_id: "", farm_id: "", participant_id: "", document_type: "", invoice_number: "",
+      issue_date: "", producer_id: "", movement: "", participant_id: "", document_type: "", invoice_number: "",
       amount: "", operation_type: "", ncm_category: "", cattle_quantity: "",
     });
   const farms = data.farms.filter(
@@ -180,7 +192,7 @@ export function Conference({ data }) {
     const contains = (value, filter) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(filter.trim().toLocaleLowerCase("pt-BR"));
     return (!columnFilters.issue_date || row.issue_date === columnFilters.issue_date)
       && (!columnFilters.producer_id || String(row.producer_id) === columnFilters.producer_id)
-      && (!columnFilters.farm_id || (columnFilters.farm_id === "unreported" ? !row.farm_id : String(row.farm_id) === columnFilters.farm_id))
+      && (!columnFilters.movement || movementOf(row).toLowerCase().includes(columnFilters.movement.toLowerCase()))
       && (!columnFilters.participant_id || (columnFilters.participant_id === "unreported" ? !row.participant_id : String(row.participant_id) === columnFilters.participant_id))
       && (!columnFilters.document_type || (row.document_type || "invoice") === columnFilters.document_type)
       && contains(row.invoice_number, columnFilters.invoice_number)
@@ -206,7 +218,7 @@ export function Conference({ data }) {
   const setColumnFilter = (key, value) => setColumnFilters(current => ({ ...current, [key]: value }));
   const hasColumnFilters = Object.values(columnFilters).some(Boolean) || Boolean(issueFilter);
   const clearColumnFilters = () => { setIssueFilter(""); setIssueIds(null); setColumnFilters({
-    issue_date: "", producer_id: "", farm_id: "", participant_id: "", document_type: "", invoice_number: "",
+    issue_date: "", producer_id: "", movement: "", participant_id: "", document_type: "", invoice_number: "",
     amount: "", operation_type: "", ncm_category: "", cattle_quantity: "",
   }); };
   const exportSpreadsheet = async () => {
@@ -215,6 +227,7 @@ export function Conference({ data }) {
     const accounts = {
       cattle: { incoming: "Compra de Bovinos", outgoing: "Venda de Bovinos" },
       soy: { incoming: "Compra de Soja", outgoing: "Venda de Soja" },
+      fuel: { incoming: "Compra de Combustível", outgoing: "Venda de Combustível" },
       other: { incoming: "Despesas da Fazenda", outgoing: "Outras receitas" },
     };
     const workbook = new ExcelJS.Workbook();
@@ -323,6 +336,12 @@ export function Conference({ data }) {
   }, []);
   const update = (id, key, value) =>
     setRows(current => current.map((r) => (r.id === id ? { ...r, [key]: value, is_reviewed: 0 } : r)));
+  // Ao trocar o produtor, a fazenda só continua se for dele.
+  const changeProducer = (id, producerId) =>
+    setRows(current => current.map(row => row.id !== id ? row : { ...row, producer_id: producerId, farm_id: data.farms.some(f => f.id === row.farm_id && Number(f.producer_id) === producerId) ? row.farm_id : null, is_reviewed: 0 }));
+  // Folha de pagamento e contrato não têm classificação NCM nem gado (igual ao lançamento manual).
+  const changeDocumentType = (id, documentType) =>
+    setRows(current => current.map(row => row.id !== id ? row : { ...row, document_type: documentType, ...(documentType === "invoice" ? {} : { ncm_category: "other", cattle_quantity: null }), is_reviewed: 0 }));
   const updateParticipant = (id, participantId, participantName) =>
     setRows(current => current.map(row => row.id === id ? { ...row, participant_id: participantId, participant_name: participantName, is_reviewed: 0 } : row));
   const save = async (row, isReviewed = 1) => {
@@ -333,7 +352,7 @@ export function Conference({ data }) {
     setRows(current => current.map(item => item.id === row.id ? { ...item, is_reviewed: result.is_reviewed } : item));
   };
   const openManual = () => {
-    setManual({ producer_id: producer, farm_id: farm, participant_id: "", document_type: "invoice", issue_date: new Date().toISOString().slice(0, 10), invoice_number: "", amount: 0, operation_type: "outgoing", ncm_category: "other", cattle_quantity: "" });
+    setManual({ producer_id: producer, farm_id: farm, participant_id: "", document_type: "invoice", issue_date: new Date().toISOString().slice(0, 10), invoice_number: "", amount: 0, operation_type: "outgoing", ncm_category: "other", cattle_quantity: "", movement: "" });
     setManualError("");
     setManualFiles([]);
     setShowManual(true);
@@ -474,6 +493,7 @@ export function Conference({ data }) {
             <option value="">Todas as classificações</option>
             <option value="cattle">Gado (0102)</option>
             <option value="soy">Soja (1201)</option>
+            <option value="fuel">Combustível (2710, 2711, 2207, 3826)</option>
             <option value="other">Outros</option>
           </select>
         </label>
@@ -500,6 +520,7 @@ export function Conference({ data }) {
           )) : <span className="issue-ok"><CheckCircle2 />Nenhuma pendência nas notas deste filtro.</span>}
           {issueFilter && <button type="button" className="issue-clear" onClick={() => { setIssueFilter(""); setIssueIds(null); }}><X />Mostrar todas</button>}
         </div>}
+        <datalist id="movement-options">{MOVEMENT_OPTIONS.map(option => <option value={option} key={option} />)}</datalist>
         {loading ? (
           <Loading text="Carregando notas..." />
         ) : producer && rows.length ? (
@@ -512,7 +533,7 @@ export function Conference({ data }) {
                 <tr className="conference-groups">
                   <th className="select-cell" aria-hidden="true" />
                   <th colSpan="6">Dados do lançamento</th>
-                  <th colSpan="2">Movimentação</th>
+                  <th colSpan="2">Valores</th>
                   <th colSpan="2">Classificação fiscal</th>
                   <th colSpan="2">Conferência</th>
                 </tr>
@@ -520,7 +541,7 @@ export function Conference({ data }) {
                   <th className="select-cell"><input type="checkbox" aria-label="Selecionar todas as notas visíveis" checked={allVisibleSelected} onChange={toggleAll} /></th>
                   <th>Data</th>
                   <th>Produtor</th>
-                  <th>Fazenda</th>
+                  <th>Movimentação</th>
                   <th>Participante</th>
                   <th>Documento</th>
                   <th>Nº da nota</th>
@@ -535,13 +556,13 @@ export function Conference({ data }) {
                   <th className="select-cell filter-marker" title="Filtros da grade"><Filter aria-hidden="true" /></th>
                   <th><input type="date" aria-label="Filtrar por data" value={columnFilters.issue_date} onChange={(e) => setColumnFilter("issue_date", e.target.value)} /></th>
                   <th><select aria-label="Filtrar por produtor" value={columnFilters.producer_id} onChange={(e) => setColumnFilter("producer_id", e.target.value)}><option value="">Todos</option>{data.producers.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}</select></th>
-                  <th><select aria-label="Filtrar por fazenda" value={columnFilters.farm_id} onChange={(e) => setColumnFilter("farm_id", e.target.value)}><option value="">Todas</option><option value="unreported">Não informada</option>{data.farms.map((f) => <option value={f.id} key={f.id}>{f.name} — IE {maskIe(f.state_registration)}</option>)}</select></th>
+                  <th><input aria-label="Filtrar por movimentação" placeholder="Buscar..." value={columnFilters.movement} onChange={(e) => setColumnFilter("movement", e.target.value)} /></th>
                   <th><select aria-label="Filtrar por participante" value={columnFilters.participant_id} onChange={(e) => setColumnFilter("participant_id", e.target.value)}><option value="">Todos</option><option value="unreported">Não informado</option>{data.participants.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}</select></th>
                   <th><select aria-label="Filtrar por tipo de documento" value={columnFilters.document_type} onChange={(e) => setColumnFilter("document_type", e.target.value)}><option value="">Todos</option><option value="invoice">Nota fiscal</option><option value="payroll">Folha de pagamento</option><option value="contract">Contrato</option></select></th>
                   <th><input aria-label="Filtrar por número da nota" placeholder="Buscar..." value={columnFilters.invoice_number} onChange={(e) => setColumnFilter("invoice_number", e.target.value)} /></th>
                   <th><input aria-label="Filtrar por valor" inputMode="decimal" placeholder="Buscar..." value={columnFilters.amount} onChange={(e) => setColumnFilter("amount", e.target.value)} /></th>
                   <th><select aria-label="Filtrar por tipo" value={columnFilters.operation_type} onChange={(e) => setColumnFilter("operation_type", e.target.value)}><option value="">Todos</option><option value="incoming">Entrada</option><option value="outgoing">Saída</option></select></th>
-                  <th><select aria-label="Filtrar por classificação NCM" value={columnFilters.ncm_category} onChange={(e) => setColumnFilter("ncm_category", e.target.value)}><option value="">Todas</option><option value="cattle">Gado</option><option value="soy">Soja</option><option value="other">Outros</option></select></th>
+                  <th><select aria-label="Filtrar por classificação NCM" value={columnFilters.ncm_category} onChange={(e) => setColumnFilter("ncm_category", e.target.value)}><option value="">Todas</option><option value="cattle">Gado</option><option value="soy">Soja</option><option value="fuel">Combustível</option><option value="other">Outros</option></select></th>
                   <th><input aria-label="Filtrar por quantidade de gado" inputMode="numeric" placeholder="Buscar..." value={columnFilters.cattle_quantity} onChange={(e) => setColumnFilter("cattle_quantity", e.target.value)} /></th>
                   <th colSpan="2" className="filter-actions"><button type="button" onClick={clearColumnFilters} disabled={!hasColumnFilters}><X aria-hidden="true" />Limpar filtros</button></th>
                 </tr>
@@ -563,7 +584,7 @@ export function Conference({ data }) {
                       <select
                         value={r.producer_id}
                         onChange={(e) =>
-                          update(r.id, "producer_id", Number(e.target.value))
+                          changeProducer(r.id, Number(e.target.value))
                         }
                       >
                         {data.producers.map((p) => (
@@ -573,11 +594,19 @@ export function Conference({ data }) {
                         ))}
                       </select>
                     </td>
-                    <td>{r.farm_name || "Não informada"}</td>
+                    <td className="conference-movement">
+                      <input list="movement-options" title="Escolha Receita ou Despesa da fazenda, ou escreva uma descrição (ex.: Compras, Devolução de venda)" maxLength={80} placeholder={movementOf({ ...r, movement: null })} value={r.movement || ""} onChange={(e) => update(r.id, "movement", e.target.value)} />
+                    </td>
                     <td className="conference-participant" title={r.participant_name || "Não informado"}>
                       <ParticipantPicker participantId={r.participant_id} participantName={r.participant_name} choices={participantChoices} labelsById={participantLabelsById} onChoose={(participantId, participantName) => updateParticipant(r.id, participantId, participantName)} />
                     </td>
-                    <td className="conference-document-type">{({ invoice: "Nota fiscal", payroll: "Folha de pagamento", contract: "Contrato" })[r.document_type || "invoice"]}</td>
+                    <td className="conference-document-type">
+                      <select value={r.document_type || "invoice"} onChange={(e) => changeDocumentType(r.id, e.target.value)}>
+                        <option value="invoice">Nota fiscal</option>
+                        <option value="payroll">Folha de pagamento</option>
+                        <option value="contract">Contrato</option>
+                      </select>
+                    </td>
                     <td>
                       <input
                         value={r.invoice_number || ""}
@@ -602,6 +631,7 @@ export function Conference({ data }) {
                       <select className={`ncm-category-select ${r.ncm_category || "other"}`} title={r.ncm_codes || "NCM não informado"} value={r.ncm_category || "other"} onChange={(e) => setRows(current => current.map(row => row.id === r.id ? { ...row, ncm_category: e.target.value, cattle_quantity: e.target.value === "cattle" ? row.cattle_quantity : null, is_reviewed: 0 } : row))}>
                         <option value="cattle">Gado</option>
                         <option value="soy">Soja</option>
+                        <option value="fuel">Combustível</option>
                         <option value="other">Outros</option>
                       </select>
                     </td>
@@ -655,10 +685,11 @@ export function Conference({ data }) {
           <label>Fazenda<select value={manual.farm_id} disabled={!manual.producer_id} onChange={(e) => setManual({ ...manual, farm_id: e.target.value })}><option value="">Não informada</option>{data.farms.filter((f) => String(f.producer_id) === String(manual.producer_id)).map((f) => <option value={f.id} key={f.id}>{f.name}</option>)}</select></label>
           <label>Participante<select value={manual.participant_id} onChange={(e) => setManual({ ...manual, participant_id: e.target.value })}><option value="">Não informado</option>{data.participants.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}</select></label>
           <label>Data de emissão<input type="date" required value={manual.issue_date} onChange={(e) => setManual({ ...manual, issue_date: e.target.value })} /></label>
+          <label>Movimentação<input list="movement-options" maxLength={80} placeholder={movementOf({ operation_type: manual.operation_type })} value={manual.movement} onChange={(e) => setManual({ ...manual, movement: e.target.value })} /></label>
           <label>Número/identificação do documento<input required value={manual.invoice_number} onChange={(e) => setManual({ ...manual, invoice_number: e.target.value })} /></label>
           <label>Valor<CurrencyInput value={manual.amount} onValue={(amount) => setManual({ ...manual, amount })} /></label>
           <label>Tipo<select value={manual.operation_type} onChange={(e) => setManual({ ...manual, operation_type: e.target.value })}><option value="incoming">Entrada</option><option value="outgoing">Saída</option></select></label>
-          {manual.document_type === "invoice" && <label>Classificação<select value={manual.ncm_category} onChange={(e) => setManual({ ...manual, ncm_category: e.target.value, cattle_quantity: e.target.value === "cattle" ? manual.cattle_quantity : "" })}><option value="cattle">Gado</option><option value="soy">Soja</option><option value="other">Outros</option></select></label>}
+          {manual.document_type === "invoice" && <label>Classificação<select value={manual.ncm_category} onChange={(e) => setManual({ ...manual, ncm_category: e.target.value, cattle_quantity: e.target.value === "cattle" ? manual.cattle_quantity : "" })}><option value="cattle">Gado</option><option value="soy">Soja</option><option value="fuel">Combustível</option><option value="other">Outros</option></select></label>}
           {manual.document_type === "invoice" && manual.ncm_category === "cattle" && <label>Quantidade de gado<input type="number" min="0" step="1" required value={manual.cattle_quantity} onChange={(e) => setManual({ ...manual, cattle_quantity: e.target.value })} /></label>}
           <label className="manual-files">Comprovantes (opcional)
             <input type="file" multiple accept={attachmentAccept} onChange={(e) => setManualFiles([...e.target.files])} />

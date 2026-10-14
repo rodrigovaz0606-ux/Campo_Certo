@@ -41,7 +41,7 @@ export function Crud({ type, title, items, producers, reload, loading = false })
       const a = result.address;
       // Sem produtor escolhido, seleciona o titular quando ele já está cadastrado como produtor.
       const owner = holderProducer(result);
-      setDraft({ ...current, producer_id: current.producer_id || owner?.id || "", name: current.name || result.tradeName || "", address: a.street || current.address, address_number: a.number || current.address_number, complement: a.complement || current.complement, neighborhood: a.neighborhood || current.neighborhood, zip_code: a.zipCode || current.zip_code });
+      setDraft({ ...current, uf: result.uf || current.uf, city_code: a.cityCode || current.city_code, city_name: a.city ? `${a.city}/${result.uf}` : current.city_name, producer_id: current.producer_id || owner?.id || "", name: current.name || result.tradeName || "", address: a.street || current.address, address_number: a.number || current.address_number, complement: a.complement || current.complement, neighborhood: a.neighborhood || current.neighborhood, zip_code: a.zipCode || current.zip_code });
       setFormVersion((v) => v + 1);
       setLookup(result);
     } catch (e) { setLookupError(e.message); }
@@ -91,21 +91,10 @@ export function Crud({ type, title, items, producers, reload, loading = false })
     setError("");
     try {
       const values = Object.fromEntries(new FormData(e.currentTarget));
-      const saved = await api(`/${type}${editing ? `/${editing.id}` : ""}`, {
+      await api(`/${type}${editing ? `/${editing.id}` : ""}`, {
         method: editing ? "PUT" : "POST",
         body: JSON.stringify(values),
       });
-      // Guarda o município (código IBGE) vindo da SEFAZ nos dados do LCDPR da fazenda, sem sobrescrever o que já existe.
-      if (type === "farms" && lookup?.address?.cityCode && saved?.id) {
-        try {
-          const lcdpr = await api(`/lcdpr/settings?producer_id=${values.producer_id}`);
-          const current = lcdpr.settings.imoveis?.[saved.id] || {};
-          if (!current.cod_mun) {
-            const settings = { ...lcdpr.settings, imoveis: { ...lcdpr.settings.imoveis, [saved.id]: { ...current, cod_mun: lookup.address.cityCode, uf: current.uf || lookup.uf } } };
-            await api("/lcdpr/settings", { method: "PUT", body: JSON.stringify({ producer_id: Number(values.producer_id), settings, accountant: lcdpr.accountant }) });
-          }
-        } catch { /* complemento opcional: não impede o cadastro */ }
-      }
       closeModal();
       reload();
     } catch (e) {
@@ -263,6 +252,17 @@ export function Crud({ type, title, items, producers, reload, loading = false })
                   <small>Endereço preenchido com os dados da SEFAZ; confira e ajuste se precisar. Consulta feita com o certificado {lookup.certificate_used === "produtor" ? "do produtor" : "do escritório"}.</small>
                 </div>; })()}
                 <AddressFields item={draft || editing || {}} />
+                {/* Dados usados no LCDPR (registro 0040). NIRF e CAEPF ficam zerados quando não houver o número. */}
+                <fieldset className="farm-fiscal">
+                  <legend>Dados para o LCDPR</legend>
+                  <label>UF<input name="uf" maxLength={2} defaultValue={(draft || editing)?.uf || "GO"} /></label>
+                  <label>Município (código IBGE)<input name="city_code" inputMode="numeric" maxLength={7} placeholder="Ex.: 5214838" defaultValue={(draft || editing)?.city_code || ""} />
+                    {(draft || editing)?.city_name && <small className="field-help">{(draft || editing).city_name}</small>}
+                  </label>
+                  <input type="hidden" name="city_name" defaultValue={(draft || editing)?.city_name || ""} />
+                  <label>NIRF / CAFIR<input name="nirf" inputMode="numeric" maxLength={8} defaultValue={(draft || editing)?.nirf || "00000000"} /></label>
+                  <label>CAEPF<input name="caepf" inputMode="numeric" maxLength={14} defaultValue={(draft || editing)?.caepf || "00000000000000"} /></label>
+                </fieldset>
                 <label>
                   Tipo de propriedade
                   <select name="ownership_type" required value={ownership} onChange={(e) => setOwnership(e.target.value)}>
@@ -270,6 +270,16 @@ export function Crud({ type, title, items, producers, reload, loading = false })
                     <option value="shared">Possui participação</option>
                   </select>
                 </label>
+                {ownership === "shared" ? <label>
+                  Tipo de exploração (LCDPR)
+                  <select name="exploration_type" defaultValue={(draft || editing)?.exploration_type && (draft || editing).exploration_type !== "1" ? (draft || editing).exploration_type : "4"}>
+                    <option value="4">Parceria</option>
+                    <option value="2">Condomínio</option>
+                    <option value="3">Imóvel arrendado</option>
+                    <option value="5">Comodato</option>
+                    <option value="6">Outros</option>
+                  </select>
+                </label> : <input type="hidden" name="exploration_type" value="1" />}
                 {ownership === "shared" && <div className="partners">
                   <div className="partners-title"><div><b>Sócios da fazenda</b><small>Informe o CPF e o percentual de cada sócio.</small></div><button type="button" className="outline" onClick={() => setPartners([...partners, { document: "", share: "" }])}><Plus /> Adicionar sócio</button></div>
                   {partners.map((partner, index) => <div className="partner-row" key={index}>

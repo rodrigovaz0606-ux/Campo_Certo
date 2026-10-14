@@ -21,6 +21,7 @@ const extraCa = process.env.SEFAZ_CA_FILE ? [fs.readFileSync(process.env.SEFAZ_C
 
 export const UF_CODES = { AC: '12', AL: '27', AM: '13', AP: '16', BA: '29', CE: '23', DF: '53', ES: '32', GO: '52', MA: '21', MG: '31', MS: '50', MT: '51', PA: '15', PB: '25', PE: '26', PI: '22', PR: '41', RJ: '33', RN: '24', RO: '11', RR: '14', RS: '43', SC: '42', SE: '28', SP: '35', TO: '17' }
 const WAIT_MS = 61 * 60 * 1000 // a SEFAZ pede 1 hora de espera quando não há documentos novos
+const AWARENESS_DAYS = 10 // prazo da SEFAZ para registrar a Ciência da Operação, contado da emissão
 const NFE_NS = 'http://www.portalfiscal.inf.br/nfe'
 const parser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false, attributeNamePrefix: '@_' })
 const digits = value => String(value ?? '').replace(/\D/g, '')
@@ -279,18 +280,30 @@ export async function syncProducer({ db, producer, certificate, uf, importXml, p
   // Ciência da Operação para os resumos ainda sem XML (autorizadas e não manifestadas), 20 por lote.
   // SEFAZ_MANIFESTAR=0 desliga o envio automático (útil para testar só a consulta).
   // Com período escolhido, só as notas emitidas nele recebem a ciência.
-  const pending = process.env.SEFAZ_MANIFESTAR === '0' ? [] : db.prepare("SELECT access_key,issue_date FROM sefaz_summaries WHERE producer_id=? AND imported=0 AND manifested_at IS NULL AND COALESCE(situation,'1')='1' ORDER BY issue_date LIMIT 500").all(producer.id).filter(row => inPeriod(period, row.issue_date)).slice(0, 100).map(row => row.access_key)
+  // A SEFAZ só aceita a ciência até 10 dias depois da emissão: as mais antigas são marcadas como fora do prazo e não são reenviadas.
+  const deadline = new Date(now - (AWARENESS_DAYS - 1) * 864e5).toISOString().slice(0, 10)
   const saveManifest = db.prepare('UPDATE sefaz_summaries SET manifested_at=?,manifest_status=? WHERE producer_id=? AND access_key=?')
+  const open = db.prepare("SELECT access_key,issue_date FROM sefaz_summaries WHERE producer_id=? AND imported=0 AND manifested_at IS NULL AND COALESCE(situation,'1')='1' AND COALESCE(manifest_status,'') NOT LIKE 'fora do prazo%' ORDER BY issue_date").all(producer.id).filter(row => inPeriod(period, row.issue_date))
+  for (const row of open.filter(row => row.issue_date && row.issue_date < deadline)) saveManifest.run(null, 'fora do prazo da ciência (10 dias)', producer.id, row.access_key)
+  const pending = process.env.SEFAZ_MANIFESTAR === '0' ? [] : open.filter(row => !row.issue_date || row.issue_date >= deadline).slice(0, 100).map(row => row.access_key)
+  const failures = new Map()
   for (let start = 0; start < pending.length; start += 20) {
     try {
       const { results } = await sendAwareness({ certificate, document: producer.cpf, accessKeys: pending.slice(start, start + 20) })
       for (const [key, result] of results) {
         // 135: registrado; 573: já registrado antes. Os dois liberam o XML completo na próxima consulta.
         if (['135', '136', '573'].includes(result.cStat)) { saveManifest.run(new Date(now).toISOString(), `${result.cStat} - ${result.xMotivo}`, producer.id, key); report.manifested++ }
-        else { saveManifest.run(null, `${result.cStat} - ${result.xMotivo}`, producer.id, key); report.manifestErrors.push(`${key}: ${result.xMotivo}`) }
+        else {
+          const expired = /prazo/i.test(result.xMotivo)
+          saveManifest.run(null, expired ? 'fora do prazo da ciência (10 dias)' : `${result.cStat} - ${result.xMotivo}`, producer.id, key)
+          failures.set(result.xMotivo, (failures.get(result.xMotivo) || 0) + 1)
+        }
       }
-    } catch (error) { report.manifestErrors.push(error.message); break }
+    } catch (error) { failures.set(error.message, (failures.get(error.message) || 0) + 1); break }
   }
+  // Uma linha por motivo, com a quantidade, em vez de uma linha por nota.
+  report.manifestErrors = [...failures].map(([reason, count]) => `${count} nota(s): ${reason}`)
+  report.expiredSummaries = db.prepare("SELECT COUNT(*) total FROM sefaz_summaries WHERE producer_id=? AND imported=0 AND manifest_status LIKE 'fora do prazo%'").get(producer.id).total
   report.nextAllowedAt = waitUntil ? new Date(waitUntil).toISOString() : null
   return report
 }

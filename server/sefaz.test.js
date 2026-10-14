@@ -65,7 +65,12 @@ test('a ciência da operação sai com assinatura XML válida (conferida pelo xm
 })
 
 const nfeXml = `<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><NFe><infNFe Id="NFe${ACCESS_KEY}" versao="4.00"><ide><nNF>27111523</nNF><dhEmi>2025-03-03T10:00:00-03:00</dhEmi><tpNF>1</tpNF></ide><emit><CNPJ>01409655000180</CNPJ><xNome>Agropecuária Fornecedora</xNome><IE>115058400</IE></emit><dest><CPF>${CPF}</CPF><xNome>Produtor Teste</xNome><IE>115052925</IE></dest><det nItem="1"><prod><NCM>31010000</NCM><uCom>UN</uCom><qCom>10</qCom></prod></det><total><ICMSTot><vNF>4500.00</vNF></ICMSTot></total></infNFe></NFe><protNFe><infProt><chNFe>${ACCESS_KEY}</chNFe></infProt></protNFe></nfeProc>`
-const summaryXml = `<resNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><chNFe>${SUMMARY_KEY}</chNFe><CNPJ>01409655000180</CNPJ><xNome>Outro Fornecedor</xNome><IE>1</IE><dhEmi>2025-03-05T10:00:00-03:00</dhEmi><tpNF>1</tpNF><vNF>990.50</vNF><digVal>x</digVal><dhRecbto>2025-03-05T10:00:00-03:00</dhRecbto><nProt>1</nProt><cSitNFe>1</cSitNFe></resNFe>`
+// Resumo de hoje (dentro dos 10 dias da ciência) e um resumo antigo (fora do prazo: não recebe ciência).
+const OLD_SUMMARY_KEY = '52250301409655000180558900271115231143382857'
+const today = new Date().toISOString().slice(0, 10)
+const summary = (key, day) => `<resNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><chNFe>${key}</chNFe><CNPJ>01409655000180</CNPJ><xNome>Outro Fornecedor</xNome><IE>1</IE><dhEmi>${day}T10:00:00-03:00</dhEmi><tpNF>1</tpNF><vNF>990.50</vNF><digVal>x</digVal><dhRecbto>${day}T10:00:00-03:00</dhRecbto><nProt>1</nProt><cSitNFe>1</cSitNFe></resNFe>`
+const summaryXml = summary(SUMMARY_KEY, today)
+const oldSummaryXml = summary(OLD_SUMMARY_KEY, '2025-03-05')
 const zip = xml => zlib.gzipSync(Buffer.from(xml)).toString('base64')
 
 async function startFakeSefaz() {
@@ -80,8 +85,8 @@ async function startFakeSefaz() {
         calls.dist.push({ clientCn, ultNSU: body.match(/<ultNSU>(\d+)<\/ultNSU>/)?.[1], cpf: body.match(/<CPF>(\d+)<\/CPF>/)?.[1] })
         const first = calls.dist.length === 1
         const ret = first
-          ? `<retDistDFeInt xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><tpAmb>1</tpAmb><verAplic>1</verAplic><cStat>138</cStat><xMotivo>Documento localizado</xMotivo><dhResp>2026-10-13T10:00:00-03:00</dhResp><ultNSU>000000000000002</ultNSU><maxNSU>000000000000002</maxNSU><loteDistDFeInt><docZip NSU="000000000000001" schema="procNFe_v4.00.xsd">${zip(nfeXml)}</docZip><docZip NSU="000000000000002" schema="resNFe_v1.01.xsd">${zip(summaryXml)}</docZip></loteDistDFeInt></retDistDFeInt>`
-          : `<retDistDFeInt xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><tpAmb>1</tpAmb><cStat>137</cStat><xMotivo>Nenhum documento localizado</xMotivo><ultNSU>000000000000002</ultNSU><maxNSU>000000000000002</maxNSU></retDistDFeInt>`
+          ? `<retDistDFeInt xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><tpAmb>1</tpAmb><verAplic>1</verAplic><cStat>138</cStat><xMotivo>Documento localizado</xMotivo><dhResp>2026-10-13T10:00:00-03:00</dhResp><ultNSU>000000000000003</ultNSU><maxNSU>000000000000003</maxNSU><loteDistDFeInt><docZip NSU="000000000000001" schema="procNFe_v4.00.xsd">${zip(nfeXml)}</docZip><docZip NSU="000000000000002" schema="resNFe_v1.01.xsd">${zip(summaryXml)}</docZip><docZip NSU="000000000000003" schema="resNFe_v1.01.xsd">${zip(oldSummaryXml)}</docZip></loteDistDFeInt></retDistDFeInt>`
+          : `<retDistDFeInt xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><tpAmb>1</tpAmb><cStat>137</cStat><xMotivo>Nenhum documento localizado</xMotivo><ultNSU>000000000000003</ultNSU><maxNSU>000000000000003</maxNSU></retDistDFeInt>`
         return res.end(`<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body><nfeDistDFeInteresseResponse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe"><nfeDistDFeInteresseResult>${ret}</nfeDistDFeInteresseResult></nfeDistDFeInteresseResponse></soap:Body></soap:Envelope>`)
       }
       if (req.url === '/cadastro') {
@@ -142,8 +147,10 @@ test('busca na SEFAZ: importa a nota completa, registra a ciência do resumo e r
   const first = await call('/sefaz/sync', token, { method: 'POST', body: { producer_id: producer.id } })
   assert.equal(first.status, 200, JSON.stringify(first.data))
   assert.equal(first.data.imported, 1)
-  assert.equal(first.data.summaries, 1)
-  assert.equal(first.data.manifested, 1)
+  assert.equal(first.data.summaries, 2)
+  assert.equal(first.data.manifested, 1) // só o resumo de hoje; o antigo está fora dos 10 dias
+  assert.equal(first.data.expiredSummaries, 1)
+  assert.deepEqual(first.data.manifestErrors, [])
   assert.ok(first.data.nextAllowedAt)
   assert.deepEqual(calls.dist[0], { clientCn: `PRODUTOR TESTE:${CPF}`, ultNSU: '000000000000000', cpf: CPF })
   assert.deepEqual(calls.evento, [{ clientCn: `PRODUTOR TESTE:${CPF}`, keys: [SUMMARY_KEY], signed: true }])
@@ -157,8 +164,8 @@ test('busca na SEFAZ: importa a nota completa, registra a ciência do resumo e r
   assert.equal(again.status, 429)
   assert.match(again.data.error, /só permite uma nova consulta/)
   const status = (await call(`/sefaz/status?producer_id=${producer.id}`, token)).data
-  assert.equal(status.state.ult_nsu, '000000000000002')
-  assert.equal(status.pending, 1)
+  assert.equal(status.state.ult_nsu, '000000000000003')
+  assert.equal(status.pending, 2)
   assert.equal(status.certificate.holder_name, 'PRODUTOR TESTE')
 })
 

@@ -7,6 +7,12 @@ const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next))
 const publicUser = id => db.prepare(`SELECT u.id,u.name,u.email,u.is_admin,u.company_id,u.session_version,u.created_at,c.name company_name
   FROM users u JOIN companies c ON c.id=u.company_id WHERE u.id=? AND c.deleted_at IS NULL`).get(id)
 
+// Quem já usa o e-mail (o login é único no sistema todo). `archived`: usuário de empresa excluída, que não aparece na lista.
+const emailOwner = (email, exceptId = 0) => {
+  const row = db.prepare('SELECT u.id,u.name,u.is_admin,c.name company_name,c.deleted_at FROM users u JOIN companies c ON c.id=u.company_id WHERE u.email=? AND u.id<>?').get(email, exceptId)
+  return row ? { ...row, archived: Boolean(row.deleted_at) && !row.is_admin } : null
+}
+
 export function identityRoutes(app, { secret, auth, adminOnly }) {
   const loginResponse = (res, id, status = 200) => {
     const user = publicUser(id)
@@ -68,6 +74,14 @@ export function identityRoutes(app, { secret, auth, adminOnly }) {
     if (!Number.isSafeInteger(companyId) || !db.prepare('SELECT id FROM companies WHERE id=? AND deleted_at IS NULL').get(companyId)) return res.status(400).json({ error: 'Selecione a empresa deste usuário.' })
     const hash = await bcrypt.hash(password, 10)
     if (!db.prepare('SELECT id FROM companies WHERE id=? AND deleted_at IS NULL').get(companyId)) return res.status(400).json({ error: 'Empresa indisponível.' })
+    const owner = emailOwner(email)
+    if (owner && !owner.archived) return res.status(409).json({ error: `Já existe um usuário com este e-mail (${owner.name}, empresa ${owner.company_name}).` })
+    // E-mail de usuário arquivado (a empresa dele foi excluída): a conta é reaproveitada na nova empresa,
+    // com o novo nome e a nova senha; as sessões antigas são encerradas.
+    if (owner) {
+      db.prepare('UPDATE users SET name=?,password_hash=?,company_id=?,session_version=session_version+1 WHERE id=? AND is_admin=0').run(name, hash, companyId, owner.id)
+      return res.status(201).json(publicUser(owner.id))
+    }
     // The administrator flag is never accepted from the client.
     const id = Number(db.prepare('INSERT INTO users(name,email,password_hash,is_admin,company_id) VALUES (?,?,?,0,?)').run(name,email,hash,companyId).lastInsertRowid)
     res.status(201).json(publicUser(id))
@@ -80,6 +94,8 @@ export function identityRoutes(app, { secret, auth, adminOnly }) {
     if (!name || !email || (password && password.length < 6)) return res.status(400).json({ error: 'Informe nome, e-mail e senha válida.' })
     if (!Number.isSafeInteger(companyId) || !db.prepare('SELECT id FROM companies WHERE id=? AND deleted_at IS NULL').get(companyId)) return res.status(400).json({ error: 'Empresa inválida.' })
     if (existing.is_admin && companyId !== existing.company_id) return res.status(400).json({ error: 'Use o seletor de empresa para alternar o acesso do administrador.' })
+    const owner = emailOwner(email, existing.id)
+    if (owner) return res.status(409).json({ error: owner.archived ? `Este e-mail pertence a um usuário arquivado da empresa excluída ${owner.company_name}. Para usá-lo, crie um novo usuário com ele.` : `Já existe um usuário com este e-mail (${owner.name}, empresa ${owner.company_name}).` })
     const hash = password ? await bcrypt.hash(password, 10) : null
     if (!publicUser(existing.id) || !db.prepare('SELECT id FROM companies WHERE id=? AND deleted_at IS NULL').get(companyId)) return res.status(400).json({ error: 'Empresa indisponível.' })
     db.prepare(`UPDATE users SET name=?,email=?,company_id=?,password_hash=COALESCE(?,password_hash),

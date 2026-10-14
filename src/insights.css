@@ -172,3 +172,20 @@ button .spinner { margin-right: 6px; }
 .load-more button { border: 1px solid #b7c5ba; border-radius: 8px; background: #fff; color: var(--green); padding: 8px 14px; font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .spinner, .global-progress::before { animation-duration: 2.4s; } }
 .lcdpr-farm-help { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+
+/* Cadastro da fazenda: dados do LCDPR */
+.farm-fiscal { display: grid; grid-template-columns: 80px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr); gap: 10px 12px; margin: 0; padding: 12px 14px 14px; border: 1px solid var(--line); border-radius: 10px; }
+.farm-fiscal legend { padding: 0 6px; font-size: 13px; font-weight: 700; color: var(--green); }
+@media (max-width: 720px) { .farm-fiscal { grid-template-columns: 1fr 1fr; } }
+
+/* LCDPR: escolha das propriedades e dados recolhíveis */
+.lcdpr-farms { grid-column: 1 / -1; display: grid; gap: 8px; }
+.lcdpr-farm-option { display: flex !important; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; font-weight: 500; cursor: pointer; }
+.lcdpr-farm-option input { width: 17px; height: 17px; accent-color: var(--green); }
+.lcdpr-farm-option.checked { border-color: #9fc2ab; background: #f1f7f2; }
+.lcdpr-farm-option b, .lcdpr-farm-option small { display: block; }
+.lcdpr-farm-option small { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.lcdpr-details { border: 1px solid var(--line); border-radius: 10px; padding: 0 14px; }
+.lcdpr-details summary { padding: 12px 0; font-weight: 700; font-size: 13px; color: var(--green); cursor: pointer; }
+.lcdpr-details[open] { padding-bottom: 14px; display: grid; gap: 14px; }
+.lcdpr-details[open] summary { padding-bottom: 0; }

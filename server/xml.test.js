@@ -28,3 +28,9 @@ test('não inventa quantidade quando o gado é vendido por peso', () => {
   assert.equal(parseInvoiceXml(cattleXml([['01022990', 'CB', '10'], ['01022990', 'KG', '500']])).cattleQuantity, null)
   assert.equal(parseInvoiceXml(cattleXml([['25181000', 'TON', '2']])).cattleQuantity, null)
 })
+
+test('classifica combustíveis (diesel, gasolina, GLP, etanol, biodiesel e lubrificante)', () => {
+  for (const code of ['27101921', '27101259', '27111910', '22071000', '22072019', '38260000', '27101931']) assert.equal(classifyNcm([code]), 'fuel', code)
+  assert.equal(classifyNcm(['22029000']), 'other') // bebida, não é etanol
+  assert.equal(classifyNcm(['27101921', '01022190']), 'cattle') // gado tem prioridade
+})

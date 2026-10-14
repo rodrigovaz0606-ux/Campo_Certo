@@ -50,3 +50,5 @@ nav button:focus-visible, .side-footer .logout:focus-visible { outline: 2px soli
   .sidebar-collapsed [data-tip]:hover::after { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .app, .side-label { transition-duration: .01s; } }
+/* As janelas (modais) ficam acima da barra lateral. */
+.overlay { z-index: 60; }

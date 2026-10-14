@@ -10,7 +10,7 @@ import { registry as db, closeDatabases } from './tenancy.js'
 import { parseInvoiceXml } from './xml.js'
 import { identityRoutes } from './identity.js'
 import { backupRoot, listBackups, runBackup, startBackupSchedule } from './backup.js'
-import { buildLcdpr, mergeSettings, defaultAccountant, LCDPR_LAYOUT_VERSION } from './lcdpr.js'
+import { buildLcdpr, mergeSettings, farmLcdpr, defaultAccountant, LCDPR_LAYOUT_VERSION } from './lcdpr.js'
 import { validateLcdpr } from './lcdpr-validator.js'
 import { readCertificate, sealCertificate, openCertificate, syncProducer, importStored, sefazStatus, UF_CODES } from './sefaz.js'
 import { consultaCadastro } from './cadastro.js'
@@ -153,6 +153,18 @@ app.get('/api/farms', (req, res) => {
   const partners = req.db.prepare('SELECT id, document, share FROM farm_partners WHERE farm_id=? ORDER BY id')
   res.json(farms.map(f => ({ ...f, partners: partners.all(f.id) })))
 })
+// Dados fiscais da fazenda para o LCDPR. NIRF e CAEPF em branco ficam zerados, como o escritório usa.
+const farmFiscal = body => {
+  const nirf = cleanDocument(body.nirf) || '00000000', caepf = cleanDocument(body.caepf) || '00000000000000'
+  const uf = cleanText(body.uf).toUpperCase(), cityCode = cleanDocument(body.city_code), exploration = String(body.exploration_type || '')
+  if (nirf.length !== 8) return { error: 'O NIRF/CAFIR deve ter 8 dígitos (use zeros se não tiver).' }
+  if (caepf.length !== 14) return { error: 'O CAEPF deve ter 14 dígitos (use zeros se não tiver).' }
+  if (uf && !/^[A-Z]{2}$/.test(uf)) return { error: 'UF da fazenda inválida.' }
+  if (cityCode && cityCode.length !== 7) return { error: 'O código IBGE do município deve ter 7 dígitos.' }
+  if (exploration && !['1', '2', '3', '4', '5', '6'].includes(exploration)) return { error: 'Tipo de exploração inválido.' }
+  return { values: [nirf, caepf, uf || null, cityCode || null, cleanText(body.city_name) || null, exploration || null] }
+}
+const saveFarmFiscal = (database, id, fiscal) => database.prepare('UPDATE farms SET nirf=?,caepf=?,uf=?,city_code=?,city_name=?,exploration_type=? WHERE id=?').run(...fiscal.values, id)
 app.post('/api/farms', (req, res) => {
   const { producer_id, name, ownership_type } = req.body
   const a = addressValues(req.body)
@@ -161,6 +173,8 @@ app.post('/api/farms', (req, res) => {
   try { partners = Array.isArray(req.body.partners) ? req.body.partners : JSON.parse(req.body.partners || '[]') } catch { return res.status(400).json({ error: 'Os dados dos sócios são inválidos.' }) }
   if (!producer_id || !name || stateRegistration.length < 8 || stateRegistration.length > 14 || !a.address || !a.addressNumber || a.zipCode.length !== 8 || !a.neighborhood || !['unique','shared'].includes(ownership_type)) return res.status(400).json({ error: 'Preencha os dados obrigatórios da fazenda. A Inscrição Estadual deve ter de 8 a 14 números e o CEP, 8.' })
   if (req.db.prepare('SELECT id FROM farms WHERE state_registration=?').get(stateRegistration)) return res.status(409).json({ error: 'Já existe uma fazenda cadastrada com esta Inscrição Estadual.' })
+  const fiscal = farmFiscal(req.body)
+  if (fiscal.error) return res.status(400).json({ error: fiscal.error })
   if (ownership_type === 'shared') {
     if (!partners.length) return res.status(400).json({ error: 'Adicione ao menos um sócio com CPF e participação.' })
     partners = partners.map(p => ({ document: cleanDocument(p.document), share: Number(p.share) }))
@@ -173,6 +187,7 @@ app.post('/api/farms', (req, res) => {
     const info = req.db.prepare('INSERT INTO farms (producer_id,name,state_registration,address,address_number,block,lot,zip_code,neighborhood,complement,ownership_type) VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(producer_id,name.trim(),stateRegistration,a.address,a.addressNumber,a.block,a.lot,a.zipCode,a.neighborhood,a.complement,ownership_type)
     const addPartner = req.db.prepare('INSERT INTO farm_partners (farm_id,document,share) VALUES (?,?,?)')
     if (ownership_type === 'shared') partners.forEach(p => addPartner.run(info.lastInsertRowid, p.document, p.share))
+    saveFarmFiscal(req.db, info.lastInsertRowid, fiscal)
     return info.lastInsertRowid
   })
   const id = create()
@@ -185,6 +200,8 @@ app.put('/api/farms/:id', (req, res) => {
   try { partners = Array.isArray(req.body.partners) ? req.body.partners : JSON.parse(req.body.partners || '[]') } catch { return res.status(400).json({ error: 'Os dados dos sócios são inválidos.' }) }
   if (!producer_id || !name || stateRegistration.length < 8 || stateRegistration.length > 14 || !a.address || !a.addressNumber || a.zipCode.length !== 8 || !a.neighborhood || !['unique','shared'].includes(ownership_type)) return res.status(400).json({ error: 'Preencha os dados obrigatórios da fazenda. A Inscrição Estadual deve ter de 8 a 14 números e o CEP, 8.' })
   if (req.db.prepare('SELECT id FROM farms WHERE state_registration=? AND id<>?').get(stateRegistration, req.params.id)) return res.status(409).json({ error: 'Já existe uma fazenda cadastrada com esta Inscrição Estadual.' })
+  const fiscal = farmFiscal(req.body)
+  if (fiscal.error) return res.status(400).json({ error: fiscal.error })
   if (!req.db.prepare('SELECT id FROM producers WHERE id=?').get(producer_id)) return res.status(400).json({ error: 'Selecione um produtor válido.' })
   if (ownership_type === 'shared') {
     if (!partners.length) return res.status(400).json({ error: 'Adicione ao menos um sócio com CPF e participação.' })
@@ -199,6 +216,7 @@ app.put('/api/farms/:id', (req, res) => {
     req.db.prepare('DELETE FROM farm_partners WHERE farm_id=?').run(req.params.id)
     const addPartner = req.db.prepare('INSERT INTO farm_partners (farm_id,document,share) VALUES (?,?,?)')
     if (ownership_type === 'shared') partners.forEach(p => addPartner.run(req.params.id, p.document, p.share))
+    saveFarmFiscal(req.db, req.params.id, fiscal)
     return true
   })
   if (!update()) return res.status(404).json({ error: 'Fazenda não encontrada.' })
@@ -345,12 +363,13 @@ app.post('/api/invoices/manual', (req, res) => {
   if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'Informe um valor válido para o lançamento.' })
   if (!['incoming','outgoing'].includes(operationType)) return res.status(400).json({ error: 'Selecione Entrada ou Saída para o lançamento.' })
   if (!['invoice','payroll','contract'].includes(documentType)) return res.status(400).json({ error: 'Selecione um tipo de arquivo válido.' })
-  if (!['cattle','soy','other'].includes(ncmCategory)) return res.status(400).json({ error: 'Selecione uma classificação válida.' })
+  if (!['cattle','soy','fuel','other'].includes(ncmCategory)) return res.status(400).json({ error: 'Selecione uma classificação válida.' })
   if (cattleQuantity != null && (!Number.isInteger(cattleQuantity) || cattleQuantity < 0)) return res.status(400).json({ error: 'A quantidade de gado deve ser um número inteiro igual ou maior que zero.' })
   const normalizedCategory = documentType === 'invoice' ? ncmCategory : 'other'
   const normalizedQuantity = documentType === 'invoice' ? cattleQuantity : null
+  const movement = String(req.body.movement ?? '').trim().slice(0, 80) || null
   const filename = `lancamento-manual-${invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '-')}`
-  const info = req.db.prepare(`INSERT INTO invoices (producer_id,farm_id,participant_id,issue_date,invoice_number,amount,original_filename,xml_content,operation_type,ncm_category,cattle_quantity,is_reviewed,is_manual,document_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?)`).run(producerId,farmId,participantId,issueDate,invoiceNumber,amount,filename,'',operationType,normalizedCategory,normalizedQuantity,1,documentType)
+  const info = req.db.prepare(`INSERT INTO invoices (producer_id,farm_id,participant_id,issue_date,invoice_number,amount,original_filename,xml_content,operation_type,ncm_category,cattle_quantity,is_reviewed,is_manual,document_type,movement) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`).run(producerId,farmId,participantId,issueDate,invoiceNumber,amount,filename,'',operationType,normalizedCategory,normalizedQuantity,1,documentType,movement)
   res.status(201).json({ id: info.lastInsertRowid })
 })
 app.get('/api/invoices', (req, res) => {
@@ -372,7 +391,7 @@ app.get('/api/invoices', (req, res) => {
     } else { filters.push('i.issue_date>=? AND i.issue_date<?'); params.push(start, end) }
   }
   if (req.query.ncm_category) { filters.push('i.ncm_category=?'); params.push(req.query.ncm_category) }
-  res.json(req.db.prepare(`SELECT i.id,i.issue_date,i.invoice_number,i.amount,i.operation_type,i.ncm_codes,i.ncm_category,i.cattle_quantity,i.is_reviewed,i.is_manual,i.document_type,i.access_key,i.issuer_name,i.original_filename,i.producer_id,(SELECT COUNT(*) FROM attachments a WHERE a.invoice_id=i.id) attachment_count,i.farm_id,i.participant_id,p.name producer_name,f.name farm_name,pt.name participant_name FROM invoices i JOIN producers p ON p.id=i.producer_id LEFT JOIN farms f ON f.id=i.farm_id LEFT JOIN participants pt ON pt.id=i.participant_id ${filters.length?'WHERE '+filters.join(' AND '):''} ORDER BY COALESCE(i.issue_date,i.created_at) DESC`).all(...params))
+  res.json(req.db.prepare(`SELECT i.id,i.issue_date,i.invoice_number,i.amount,i.operation_type,i.ncm_codes,i.ncm_category,i.cattle_quantity,i.is_reviewed,i.is_manual,i.document_type,i.movement,i.access_key,i.issuer_name,i.original_filename,i.producer_id,(SELECT COUNT(*) FROM attachments a WHERE a.invoice_id=i.id) attachment_count,i.farm_id,i.participant_id,p.name producer_name,f.name farm_name,pt.name participant_name FROM invoices i JOIN producers p ON p.id=i.producer_id LEFT JOIN farms f ON f.id=i.farm_id LEFT JOIN participants pt ON pt.id=i.participant_id ${filters.length?'WHERE '+filters.join(' AND '):''} ORDER BY COALESCE(i.issue_date,i.created_at) DESC`).all(...params))
 })
 app.get('/api/invoice-years', (req, res) => res.json(req.db.prepare("SELECT DISTINCT strftime('%Y',issue_date) year FROM invoices WHERE issue_date IS NOT NULL ORDER BY year DESC").all().map(row => row.year)))
 app.get('/api/annual-summary', (req, res) => {
@@ -460,12 +479,16 @@ app.put('/api/invoices/:id', (req, res) => {
     if (!cpfMatches) return res.status(400).json({ error: 'O CPF do produtor não consta como emitente nem destinatário desta nota.' })
   }
   if (!['incoming','outgoing'].includes(operation_type)) return res.status(400).json({ error: 'Selecione Entrada ou Saída para a nota.' })
-  if (!['cattle','soy','other'].includes(ncm_category)) return res.status(400).json({ error: 'Selecione uma classificação NCM válida.' })
-  const cattleQuantity = ncm_category === 'cattle' && req.body.cattle_quantity !== '' && req.body.cattle_quantity != null ? Number(req.body.cattle_quantity) : null
+  if (!['cattle','soy','fuel','other'].includes(ncm_category)) return res.status(400).json({ error: 'Selecione uma classificação NCM válida.' })
+  const documentType = req.body.document_type || 'invoice'
+  if (!['invoice','payroll','contract'].includes(documentType)) return res.status(400).json({ error: 'Tipo de documento inválido.' })
+  const category = documentType === 'invoice' ? ncm_category : 'other'
+  const movement = String(req.body.movement ?? '').trim().slice(0, 80) || null
+  const cattleQuantity = category === 'cattle' && req.body.cattle_quantity !== '' && req.body.cattle_quantity != null ? Number(req.body.cattle_quantity) : null
   if (cattleQuantity != null && (!Number.isInteger(cattleQuantity) || cattleQuantity < 0)) return res.status(400).json({ error: 'A quantidade de gado deve ser um número inteiro igual ou maior que zero.' })
   const operationType = operation_type
   const isReviewed = req.body.is_reviewed === 0 || req.body.is_reviewed === false ? 0 : 1
-  req.db.prepare('UPDATE invoices SET issue_date=?,producer_id=?,farm_id=?,participant_id=?,invoice_number=?,amount=?,operation_type=?,ncm_category=?,cattle_quantity=?,is_reviewed=? WHERE id=?').run(issue_date||null,producer_id,farm_id||null,participant_id||null,invoice_number,Number(amount)||0,operationType,ncm_category,cattleQuantity,isReviewed,req.params.id)
+  req.db.prepare('UPDATE invoices SET issue_date=?,producer_id=?,farm_id=?,participant_id=?,invoice_number=?,amount=?,operation_type=?,ncm_category=?,cattle_quantity=?,is_reviewed=?,document_type=?,movement=? WHERE id=?').run(issue_date||null,producer_id,farm_id||null,participant_id||null,invoice_number,Number(amount)||0,operationType,category,cattleQuantity,isReviewed,documentType,movement,req.params.id)
   res.json({ ok: true, is_reviewed: isReviewed })
 })
 // LCDPR: dados fiscais por produtor, contador da empresa e geração do arquivo.
@@ -482,7 +505,11 @@ const lcdprContext = (database, producerId) => {
 app.get('/api/lcdpr/settings', (req, res) => {
   const context = lcdprContext(req.db, Number(req.query.producer_id))
   if (!context) return res.status(404).json({ error: 'Produtor não encontrado.' })
-  res.json({ settings: context.settings, accountant: context.accountant, farms: context.farms.map(farm => ({ id: farm.id, name: farm.name, ownership_type: farm.ownership_type, partners: farm.partners })) })
+  const names = new Map(req.db.prepare('SELECT document,name FROM participants').all().map(row => [row.document, row.name]))
+  res.json({ settings: context.settings, accountant: context.accountant, farms: context.farms.map(farm => {
+    const fiscal = farmLcdpr(farm, context.settings, names)
+    return { id: farm.id, name: farm.name, state_registration: farm.state_registration, ownership_type: farm.ownership_type, partners: farm.partners, share: fiscal.share, exploration: fiscal.exploration, nirf: fiscal.nirf, caepf: fiscal.caepf, uf: fiscal.uf, city_code: fiscal.cityCode }
+  }) })
 })
 app.put('/api/lcdpr/settings', (req, res) => {
   const producerId = Number(req.body.producer_id)
@@ -495,15 +522,21 @@ app.put('/api/lcdpr/settings', (req, res) => {
   })()
   res.json({ ok: true })
 })
+// Período livre (data inicial e final) e propriedades escolhidas, como no programa usado pelo escritório.
 app.get('/api/lcdpr', (req, res) => {
-  const year = String(req.query.year || '')
-  if (!/^\d{4}$/.test(year)) return res.status(400).json({ error: 'Selecione um ano válido.' })
+  const year = /^\d{4}$/.test(String(req.query.year || '')) ? String(req.query.year) : ''
+  const from = String(req.query.from || (year ? `${year}-01-01` : '')), to = String(req.query.to || (year ? `${year}-12-31` : ''))
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ error: 'Informe a data inicial e a data final do período.' })
   const context = lcdprContext(req.db, Number(req.query.producer_id))
   if (!context) return res.status(404).json({ error: 'Produtor não encontrado.' })
-  const invoices = req.db.prepare(`SELECT i.id,i.issue_date,i.invoice_number,i.amount,i.operation_type,i.ncm_category,i.document_type,i.farm_id,pt.document participant_document
-    FROM invoices i LEFT JOIN participants pt ON pt.id=i.participant_id WHERE i.producer_id=? AND strftime('%Y',i.issue_date)=? ORDER BY i.issue_date,i.id`).all(context.producer.id, year)
+  const chosen = String(req.query.farms || '').split(',').map(Number).filter(Boolean)
+  const farms = chosen.length ? context.farms.filter(farm => chosen.includes(farm.id)) : context.farms
+  const all = req.db.prepare(`SELECT i.id,i.issue_date,i.invoice_number,i.amount,i.operation_type,i.ncm_category,i.document_type,i.farm_id,pt.document participant_document,pt.name participant_name
+    FROM invoices i LEFT JOIN participants pt ON pt.id=i.participant_id WHERE i.producer_id=? AND i.issue_date>=? AND i.issue_date<=? ORDER BY i.issue_date,i.id`).all(context.producer.id, from, to)
+  // Só entram as notas das propriedades escolhidas (e as sem fazenda, que vão para o imóvel padrão).
+  const invoices = all.filter(invoice => !invoice.farm_id || farms.some(farm => farm.id === invoice.farm_id) || !context.farms.some(farm => farm.id === invoice.farm_id))
   const names = new Map([...req.db.prepare('SELECT document,name FROM participants').all().map(row => [row.document, row.name]), ...req.db.prepare('SELECT cpf,name FROM producers').all().map(row => [row.cpf, row.name])])
-  const result = buildLcdpr({ ...context, invoices, year, names })
+  const result = buildLcdpr({ ...context, farms, invoices, period: { from, to }, names })
   // Todo arquivo gerado passa pelo validador do leiaute antes de ser liberado.
   if (!result.errors.length) result.errors.push(...validateLcdpr(result.text).map(problem => `Formato: ${problem}`))
   res.status(result.errors.length ? 422 : 200).json({ ...result, version: LCDPR_LAYOUT_VERSION, text: result.errors.length ? '' : result.text })

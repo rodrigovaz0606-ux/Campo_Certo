@@ -144,6 +144,7 @@ export function SefazPanel({ data }) {
       <div className="success"><CheckCircle2 />{report.imported} nota(s) importada(s){report.duplicates ? `, ${report.duplicates} já existiam` : ""}{report.summaries ? `, ${report.summaries} chegaram só em resumo` : ""}.</div>
       {report.outOfPeriod > 0 && <p>{report.outOfPeriod} nota(s) de fora do período ficaram guardadas para importar depois.</p>}
       {report.manifested > 0 && <p>Foi registrada a ciência da operação de {report.manifested} nota(s). O XML completo delas fica disponível numa próxima busca (a SEFAZ libera em alguns minutos ou horas).</p>}
+      {report.expiredSummaries > 0 && <p className="sefaz-warning">{report.expiredSummaries} nota(s) chegaram só em resumo e já passaram dos 10 dias que a SEFAZ dá para a ciência da operação, por isso o XML completo delas não pode ser liberado por aqui. Peça o XML ao fornecedor ou baixe pelo portal da NF-e e importe pela tela acima.</p>}
       {report.canceled.length > 0 && <p className="sefaz-warning">A SEFAZ informou cancelamento de {report.canceled.length} nota(s): {report.canceled.join(", ")}. Confira na Conferência e exclua se tiverem sido importadas.</p>}
       {[...report.errors, ...report.manifestErrors].length > 0 && <div className="error-list">{[...report.errors, ...report.manifestErrors].map((item) => <span key={item}>{item}</span>)}</div>}
       <small>Resposta da SEFAZ: {report.status || "—"} · {report.queries} consulta(s).</small>

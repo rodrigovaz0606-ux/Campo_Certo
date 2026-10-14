@@ -3,9 +3,15 @@ import { XMLParser } from 'fast-xml-parser'
 const parser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false })
 const first = value => Array.isArray(value) ? value[0] : value
 
+// Combustíveis e lubrificantes: diesel, gasolina, querosene e óleos lubrificantes (2710), GLP (2711),
+// etanol (2207.10 e 2207.20) e biodiesel (3826).
+const fuelPrefixes = ['2710', '2711', '220710', '220720', '3826']
+const isFuelNcm = code => fuelPrefixes.some(prefix => code.startsWith(prefix))
+
 export function classifyNcm(codes) {
   if (codes.some(code => code.startsWith('0102'))) return 'cattle'
   if (codes.some(code => code.startsWith('1201'))) return 'soy'
+  if (codes.some(isFuelNcm)) return 'fuel'
   return 'other'
 }
 
