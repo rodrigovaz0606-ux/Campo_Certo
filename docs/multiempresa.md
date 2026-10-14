@@ -37,7 +37,7 @@ Esta versão exige nova entrada no sistema após a atualização; tokens antigos
 
 Para voltar à versão anterior, pare o serviço e restaure em conjunto o código anterior e o backup completo anterior à atualização. Não rode o código antigo sobre a estrutura multiempresa: ele não conhece o isolamento.
 
-Backups posteriores à migração devem conter o banco principal **e todos os bancos em `companies`**. Copiar somente `produtor-rural.db` deixa de ser um backup completo. Faça a cópia com o serviço parado; copiar arquivos SQLite em uso diretamente pode gerar um backup inconsistente.
+Backups posteriores à migração devem conter o banco principal **e todos os bancos em `companies`**. Copiar somente `produtor-rural.db` deixa de ser um backup completo. O backup automático diário (veja o README) já copia todos esses bancos de forma consistente em `data/backups/automaticos`. Para uma cópia manual dos arquivos, pare o serviço antes; copiar arquivos SQLite em uso diretamente pode gerar um backup inconsistente.
 
 ## Validação
 

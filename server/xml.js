@@ -9,6 +9,26 @@ export function classifyNcm(codes) {
   return 'other'
 }
 
+// Unidades usadas para contar animais por cabeça (CB, CAB, CABECA, UN...).
+// Peso (KG, arroba, tonelada) não vira quantidade de cabeças.
+const headUnits = new Set(['CB', 'CAB', 'CABS', 'CABECA', 'CABECAS', 'CBC', 'UN', 'UND', 'UNID', 'UNIDADE', 'U', 'ANIMAL', 'ANIMAIS', 'VOL', 'VOLUME', 'QT', 'QTD', 'QTDE']) // VOL: usado por frigoríficos (ex.: JBS) para cabeças
+const unitKey = value => String(value || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z]/g, '').toUpperCase()
+
+export function cattleHeadCount(details) {
+  let total = 0, found = false
+  for (const detail of details) {
+    const prod = detail?.prod || {}
+    if (!String(first(prod.NCM) || '').replace(/\D/g, '').startsWith('0102')) continue
+    const candidates = [[prod.uCom, prod.qCom], [prod.uTrib, prod.qTrib]]
+    const match = candidates.find(([unit, quantity]) => headUnits.has(unitKey(first(unit))) && Number.isFinite(Number(first(quantity))))
+    if (!match) return null
+    const quantity = Number(first(match[1]))
+    if (quantity < 0 || Math.abs(quantity - Math.round(quantity)) > 0.001) return null
+    total += Math.round(quantity); found = true
+  }
+  return found ? total : null
+}
+
 export function parseInvoiceXml(xml) {
   const parsed = parser.parse(xml)
   const root = parsed.nfeProc?.NFe || parsed.NFe || parsed
@@ -49,6 +69,7 @@ export function parseInvoiceXml(xml) {
       zipCode: String(first(recipientAddress.CEP) || '').replace(/\D/g, '')
     },
     ncmCodes,
-    ncmCategory: classifyNcm(ncmCodes)
+    ncmCategory: classifyNcm(ncmCodes),
+    cattleQuantity: cattleHeadCount(details)
   }
 }

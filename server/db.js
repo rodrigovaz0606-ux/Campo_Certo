@@ -3,6 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { parseInvoiceXml } from './xml.js'
+import { ensureSefazTables } from './sefaz.js'
 
 export const dataDir = path.resolve(process.env.DATA_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data'))
 const dir = dataDir
@@ -101,6 +103,41 @@ BEGIN SELECT RAISE(ABORT, 'duplicate farm state registration'); END;
 const invoicesWithoutHash = db.prepare('SELECT id,xml_content FROM invoices WHERE content_hash IS NULL').all()
 const saveContentHash = db.prepare('UPDATE invoices SET content_hash=? WHERE id=?')
 db.transaction(rows => rows.forEach(row => saveContentHash.run(crypto.createHash('sha256').update(row.xml_content.replace(/\s+/g, '')).digest('hex'), row.id)))(invoicesWithoutHash)
+
+// Comprovantes anexados aos lançamentos (PDF ou imagem), guardados no próprio banco da empresa.
+db.exec(`
+CREATE TABLE IF NOT EXISTS attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_id INTEGER NOT NULL, filename TEXT NOT NULL,
+  mime_type TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_invoice ON attachments(invoice_id);
+`)
+
+// Dados fiscais extras pedidos pelo LCDPR (município IBGE, conta bancária, NIRF...) e configurações da empresa.
+db.exec(`
+CREATE TABLE IF NOT EXISTS lcdpr_settings (
+  producer_id INTEGER PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(producer_id) REFERENCES producers(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS company_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+`)
+ensureSefazTables(db)
+
+// Migrações de dados que devem rodar uma única vez por banco.
+db.exec('CREATE TABLE IF NOT EXISTS data_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP)')
+const runOnce = (name, migrate) => {
+  if (db.prepare('SELECT 1 FROM data_migrations WHERE name=?').get(name)) return
+  db.transaction(() => { migrate(); db.prepare('INSERT INTO data_migrations(name) VALUES (?)').run(name) })()
+}
+// Preenche a quantidade de cabeças das notas de gado já importadas, sem tocar no que foi digitado.
+runOnce('cattle-quantity-from-xml', () => {
+  const rows = db.prepare("SELECT id,xml_content FROM invoices WHERE is_manual=0 AND ncm_category='cattle' AND cattle_quantity IS NULL AND xml_content<>''").all()
+  const save = db.prepare('UPDATE invoices SET cattle_quantity=? WHERE id=? AND cattle_quantity IS NULL')
+  for (const row of rows) {
+    try { const quantity = parseInvoiceXml(row.xml_content).cattleQuantity; if (quantity != null) save.run(quantity, row.id) } catch {}
+  }
+})
 
 return db
 }

@@ -1,0 +1,137 @@
+/* Gráfico do painel, pendências da Conferência e painel de backups. */
+:root {
+  --chart-revenue: #199e70;
+  --chart-expenses: #eb6834;
+  --chart-grid: #e6e9e3;
+  --chart-baseline: #c5ccc4;
+  --chart-axis: #6c776f;
+}
+
+/* Painel: receitas x despesas */
+.chart-card { margin-top: 0; padding: 22px 24px 18px; }
+.chart-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.chart-card-head h3 { margin: 0 0 4px; font-family: 'Fraunces', serif; font-size: 21px; }
+.chart-card-head p { margin: 0; color: var(--muted); font-size: 13px; }
+.chart-card-head label { min-width: 120px; font-size: 12px; }
+.chart-card-head select { padding: 8px 10px; }
+.chart-totals { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 28px; margin: 18px 0 6px; }
+.chart-totals > div { display: grid; gap: 2px; }
+.chart-totals span { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+.chart-totals b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.chart-key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.chart-key.revenue { background: var(--chart-revenue); }
+.chart-key.expenses { background: var(--chart-expenses); }
+.monthly-chart { position: relative; width: 100%; min-height: 260px; }
+.monthly-chart svg { display: block; overflow: visible; }
+.monthly-chart rect[tabindex]:focus { outline: none; }
+.chart-grid { stroke: var(--chart-grid); stroke-width: 1; shape-rendering: crispEdges; }
+.chart-baseline { stroke: var(--chart-baseline); stroke-width: 1; shape-rendering: crispEdges; }
+.chart-axis { fill: var(--chart-axis); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart-bar.revenue { fill: var(--chart-revenue); }
+.chart-bar.expenses { fill: var(--chart-expenses); }
+.chart-hover { fill: #17231d0d; }
+.chart-tooltip { position: absolute; top: 0; transform: translateX(-50%); min-width: 200px; display: grid; gap: 5px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; box-shadow: 0 10px 28px #17231d24; pointer-events: none; font-size: 12px; z-index: 2; }
+.chart-tooltip b { font-size: 13px; }
+.chart-tooltip span { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.chart-tooltip strong { margin-left: auto; color: #17231d; font-variant-numeric: tabular-nums; }
+.chart-table { margin-top: 8px; font-size: 13px; }
+.chart-table summary { width: max-content; cursor: pointer; color: var(--green); font-weight: 600; padding: 4px 0; }
+.chart-table table { margin-top: 8px; font-variant-numeric: tabular-nums; }
+.chart-table th, .chart-table td { padding: 8px 14px; }
+.chart-table td:not(:first-child), .chart-table th:not(:first-child) { text-align: right; }
+
+/* Conferência: pendências */
+.conference-issues { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 13px; border-bottom: 1px solid #cfd8d1; background: #fafbf8; }
+.conference-issues > span:first-child { margin-right: 4px; color: #30483a; font-size: 11px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.issue-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #e3d6b5; border-radius: 20px; background: #fdf7e7; color: #6f5413; padding: 5px 11px; font-size: 12px; }
+.issue-chip b { font-variant-numeric: tabular-nums; }
+.issue-chip.danger { border-color: #e7beb7; background: #fdf0ee; color: #93352b; }
+.issue-chip:hover { filter: brightness(.97); }
+.issue-chip.active { box-shadow: inset 0 0 0 2px currentColor; }
+.issue-ok { display: inline-flex; align-items: center; gap: 6px; color: #2c6a45; font-size: 12px; }
+.issue-ok svg, .issue-clear svg { width: 15px; height: 15px; }
+.issue-clear { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; border: 0; background: none; color: var(--green); font-size: 12px; font-weight: 700; }
+
+/* Usuários: backups */
+.backup-panel { padding: 22px; margin-bottom: 24px; display: grid; gap: 14px; }
+.backup-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.backup-panel-head h3 { margin: 0 0 4px; font-family: 'Fraunces', serif; font-size: 21px; }
+.backup-panel-head p { margin: 0; color: var(--muted); font-size: 13px; }
+.backup-panel-head .outline { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.backup-panel-head svg { width: 17px; }
+.backup-status { display: flex; align-items: center; gap: 9px; padding: 11px 13px; border-radius: 8px; font-size: 13px; }
+.backup-status svg { width: 18px; flex: none; }
+.backup-status.ok { background: #e8f6e8; color: #23633d; }
+.backup-status.late { background: #fdf7e7; color: #6f5413; }
+.backup-folder { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.backup-folder code { padding: 2px 6px; border-radius: 5px; background: #eef1ec; color: #2c3a32; font-size: 12px; word-break: break-all; }
+
+@media (max-width: 720px) {
+  .chart-card { padding: 18px 14px 14px; }
+  .chart-card-head, .backup-panel-head { flex-direction: column; }
+}
+
+.chart-filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) minmax(110px, .7fr); gap: 14px; margin-top: 16px; }
+.chart-filters label { font-size: 12px; }
+.chart-filters select { padding: 9px 10px; }
+.chart-card .empty { padding: 40px 20px 26px; }
+@media (max-width: 720px) { .chart-filters { grid-template-columns: 1fr; } }
+
+/* Anexos dos lançamentos manuais */
+.manual-cell { display: flex; align-items: center; gap: 6px; }
+.attachment-button { display: inline-flex; align-items: center; gap: 3px; height: 28px; padding: 0 8px; border: 1px solid #cfd8d1; border-radius: 6px; background: #fff; color: #5c6b62; font-size: 12px; font-weight: 700; }
+.attachment-button svg { width: 15px; height: 15px; }
+.attachment-button.has-files { border-color: #9fc2ab; background: #edf5ef; color: #245638; }
+.attachment-button:hover { border-color: #9fb8a7; }
+.attachments { display: grid; gap: 14px; margin-top: 18px; }
+.attachments .muted { margin: 0; }
+.attachment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.attachment-list li { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.attachment-list li > svg { width: 17px; color: var(--muted); }
+.attachment-list b, .attachment-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-list small { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.attachment-upload { display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600; }
+.attachment-upload svg { width: 17px; }
+.attachment-upload.disabled { opacity: .6; pointer-events: none; }
+.manual-files { grid-column: 1 / -1; }
+.manual-files input { padding: 9px; }
+
+/* LCDPR */
+.modal:has(.lcdpr-form) { width: min(860px, 100%); }
+.lcdpr-form { gap: 16px; }
+.lcdpr-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.lcdpr-form fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; margin: 0; padding: 14px 16px 16px; border: 1px solid var(--line); border-radius: 10px; }
+.lcdpr-form legend { padding: 0 6px; font-weight: 700; font-size: 13px; color: var(--green); }
+.lcdpr-farm { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 12px; padding: 12px; border-radius: 8px; background: #f3f6f1; }
+.lcdpr-farm > b { grid-column: 1 / -1; font-size: 13px; }
+.lcdpr-wide { grid-column: 1 / -1; }
+.lcdpr-form .actions button { display: inline-flex; align-items: center; gap: 7px; }
+.lcdpr-form .actions svg { width: 17px; }
+.lcdpr-success { align-items: flex-start; }
+.lcdpr-warnings { display: grid; gap: 4px; padding: 12px; border-radius: 8px; background: #fdf7e7; color: #6f5413; font-size: 13px; }
+@media (max-width: 720px) { .lcdpr-form fieldset, .lcdpr-farm { grid-template-columns: 1fr; } }
+
+/* Certificado A1 e busca na SEFAZ */
+.certificate-summary { display: flex; align-items: center; gap: 12px; padding: 11px 13px; border: 1px solid #cfe0d4; border-radius: 9px; background: #f1f7f2; }
+.certificate-summary svg { width: 20px; flex: none; color: var(--green); }
+.certificate-summary b, .certificate-summary small { display: block; }
+.certificate-summary small { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.certificate-summary.expiring { border-color: #e3d6b5; background: #fdf7e7; }
+.certificate-current { display: flex; align-items: center; gap: 8px; }
+.certificate-current .certificate-summary { flex: 1; }
+.certificate-none { margin: 0; padding: 11px 13px; border-radius: 9px; background: #f4f5f1; color: var(--muted); font-size: 13px; }
+.certificate-form .muted { margin: 0; font-size: 13px; line-height: 1.5; }
+.sefaz-panel { margin-top: 18px; display: grid; gap: 16px; }
+.sefaz-head { display: flex; align-items: flex-start; gap: 14px; }
+.sefaz-head .round-icon { flex: none; background: #edf3df; }
+.sefaz-head h3 { margin: 2px 0 4px; font-family: 'Fraunces', serif; font-size: 21px; }
+.sefaz-head p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.sefaz-panel .form-row { margin: 0; }
+.sefaz-state { margin: -6px 0 0; color: var(--muted); font-size: 12px; }
+.sefaz-report { display: grid; gap: 8px; font-size: 13px; }
+.sefaz-report p { margin: 0; }
+.sefaz-report small { color: var(--muted); }
+.sefaz-warning { padding: 10px 12px; border-radius: 8px; background: #fdf7e7; color: #6f5413; }
+.sefaz-panel > .primary { justify-self: end; }
+.import-card::after { content: ""; display: block; clear: both; }
+.primary:disabled { opacity: .55; cursor: not-allowed; }

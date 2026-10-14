@@ -77,7 +77,8 @@ test('migração preserva dados e administrador; empresas ficam isoladas em toda
 
   const company = await request('/companies', admin, {method:'POST',body:{name:'Cliente B'}})
   assert.equal(company.status,201); const companyId=company.data.id
-  assert.deepEqual((await request('/dashboard', admin, {company:companyId})).data, {producers:0,farms:0,participants:0,invoices:{total:0,amount:0}})
+  const emptyDashboard = (await request('/dashboard', admin, {company:companyId})).data
+  assert.deepEqual(emptyDashboard, {producers:0,farms:0,participants:0,invoices:{total:0}})
   const created = await request('/users', admin, {method:'POST',body:{name:'Cliente B',email:'b@test.local',password:'teste123',company_id:companyId,is_admin:1}})
   assert.equal(created.status,201); assert.equal(created.data.is_admin,0)
   const userId=created.data.id, token=await login('b@test.local')
