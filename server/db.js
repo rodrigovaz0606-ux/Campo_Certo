@@ -94,16 +94,19 @@ CREATE INDEX IF NOT EXISTS idx_invoices_content_hash ON invoices(content_hash) W
 CREATE INDEX IF NOT EXISTS idx_invoices_category_date ON invoices(producer_id, ncm_category, issue_date);
 CREATE INDEX IF NOT EXISTS idx_farms_producer_registration ON farms(producer_id, state_registration);
 `)
-// Mantém a regra mesmo em bases antigas que já possam conter inscrições repetidas.
-// Diferente de um índice UNIQUE, os gatilhos podem ser criados sem apagar dados legados.
+// A inscrição estadual não se repete para o mesmo produtor. Entre produtores pode repetir: a fazenda em
+// parceria/condomínio é cadastrada uma vez para cada sócio, com a mesma IE. Gatilhos em vez de índice UNIQUE
+// para não falhar em bases antigas que já tenham repetições.
 db.exec(`
-CREATE TRIGGER IF NOT EXISTS farms_state_registration_unique_insert
+DROP TRIGGER IF EXISTS farms_state_registration_unique_insert;
+DROP TRIGGER IF EXISTS farms_state_registration_unique_update;
+CREATE TRIGGER IF NOT EXISTS farms_producer_registration_unique_insert
 BEFORE INSERT ON farms
-WHEN EXISTS (SELECT 1 FROM farms WHERE state_registration = NEW.state_registration)
+WHEN EXISTS (SELECT 1 FROM farms WHERE producer_id = NEW.producer_id AND state_registration = NEW.state_registration)
 BEGIN SELECT RAISE(ABORT, 'duplicate farm state registration'); END;
-CREATE TRIGGER IF NOT EXISTS farms_state_registration_unique_update
-BEFORE UPDATE OF state_registration ON farms
-WHEN EXISTS (SELECT 1 FROM farms WHERE state_registration = NEW.state_registration AND id <> NEW.id)
+CREATE TRIGGER IF NOT EXISTS farms_producer_registration_unique_update
+BEFORE UPDATE OF producer_id, state_registration ON farms
+WHEN EXISTS (SELECT 1 FROM farms WHERE producer_id = NEW.producer_id AND state_registration = NEW.state_registration AND id <> NEW.id)
 BEGIN SELECT RAISE(ABORT, 'duplicate farm state registration'); END;
 `)
 const invoicesWithoutHash = db.prepare('SELECT id,xml_content FROM invoices WHERE content_hash IS NULL').all()

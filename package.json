@@ -10,7 +10,7 @@
     "build": "vite build",
     "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gerar-pacote-windows.ps1",
     "start": "node server/index.js",
-    "test": "node --test server/xml.test.js server/tenancy.test.js server/backup.test.js server/lcdpr.test.js server/sefaz.test.js server/attachments.test.js server/users.test.js",
+    "test": "node --test server/xml.test.js server/tenancy.test.js server/backup.test.js server/lcdpr.test.js server/sefaz.test.js server/attachments.test.js server/users.test.js server/registry.test.js",
     "check:migration": "node scripts/check-company-migration.js"
   },
   "dependencies": {

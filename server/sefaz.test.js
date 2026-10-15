@@ -204,7 +204,15 @@ test('busca por período: importa só as notas do período e guarda as outras pa
   assert.equal(calls.dist.length, 1)
   status = (await call(`/sefaz/status?producer_id=${producer.id}`, token)).data
   assert.equal(status.stored.total, 0)
-  assert.equal((await call(`/invoices?producer_id=${producer.id}&year=2025`, token)).data.length, 1)
+  const imported = (await call(`/invoices?producer_id=${producer.id}&year=2025`, token)).data
+  assert.equal(imported.length, 1)
+
+  // Excluída na Conferência, volta para as guardadas e pode ser importada de novo.
+  assert.equal((await call(`/invoices/${imported[0].id}`, token, { method: 'DELETE' })).status, 204)
+  assert.equal((await call(`/sefaz/status?producer_id=${producer.id}`, token)).data.stored.total, 1)
+  const again = await call('/sefaz/import-stored', token, { method: 'POST', body: { producer_id: producer.id, from: '2025-03-01', to: '2025-03-31' } })
+  assert.equal(again.data.imported, 1)
+  assert.equal(calls.dist.length, 1)
 })
 
 test('consulta da inscrição estadual: usa o certificado do produtor ou o do escritório e trata recusas', async t => {

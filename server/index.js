@@ -134,14 +134,16 @@ app.get('/api/producers', (req, res) => res.json(req.db.prepare('SELECT * FROM p
 app.post('/api/producers', (req, res) => {
   const { name, cpf } = req.body; const doc = cleanDocument(cpf); const a = addressValues(req.body)
   if (!name || doc.length !== 11 || !a.address || !a.addressNumber || a.zipCode.length !== 8 || !a.neighborhood) return res.status(400).json({ error: 'Preencha nome, CPF válido, endereço, número, CEP e bairro.' })
-  if (req.db.prepare('SELECT id FROM producers WHERE cpf=?').get(doc)) return res.status(409).json({ error: 'Já existe um produtor cadastrado com este CPF.' })
+  const sameProducer = req.db.prepare('SELECT name FROM producers WHERE cpf=?').get(doc)
+  if (sameProducer) return res.status(409).json({ error: `Já existe um produtor cadastrado com este CPF: ${sameProducer.name}.` })
   const info = req.db.prepare('INSERT INTO producers (name,cpf,address,address_number,block,lot,zip_code,neighborhood,complement) VALUES (?,?,?,?,?,?,?,?,?)').run(name.trim(),doc,a.address,a.addressNumber,a.block,a.lot,a.zipCode,a.neighborhood,a.complement)
   res.status(201).json(req.db.prepare('SELECT * FROM producers WHERE id=?').get(info.lastInsertRowid))
 })
 app.put('/api/producers/:id', (req, res) => {
   const name = cleanText(req.body.name); const doc = cleanDocument(req.body.cpf); const a = addressValues(req.body)
   if (!name || doc.length !== 11 || !a.address || !a.addressNumber || a.zipCode.length !== 8 || !a.neighborhood) return res.status(400).json({ error: 'Preencha nome, CPF válido, endereço, número, CEP e bairro.' })
-  if (req.db.prepare('SELECT id FROM producers WHERE cpf=? AND id<>?').get(doc, req.params.id)) return res.status(409).json({ error: 'Já existe um produtor cadastrado com este CPF.' })
+  const sameProducer = req.db.prepare('SELECT name FROM producers WHERE cpf=? AND id<>?').get(doc, req.params.id)
+  if (sameProducer) return res.status(409).json({ error: `Já existe um produtor cadastrado com este CPF: ${sameProducer.name}.` })
   const info = req.db.prepare('UPDATE producers SET name=?,cpf=?,address=?,address_number=?,block=?,lot=?,zip_code=?,neighborhood=?,complement=? WHERE id=?').run(name,doc,a.address,a.addressNumber,a.block,a.lot,a.zipCode,a.neighborhood,a.complement,req.params.id)
   if (!info.changes) return res.status(404).json({ error: 'Produtor não encontrado.' })
   res.json(req.db.prepare('SELECT * FROM producers WHERE id=?').get(req.params.id))
@@ -165,6 +167,9 @@ const farmFiscal = body => {
   return { values: [nirf, caepf, uf || null, cityCode || null, cleanText(body.city_name) || null, exploration || null] }
 }
 const saveFarmFiscal = (database, id, fiscal) => database.prepare('UPDATE farms SET nirf=?,caepf=?,uf=?,city_code=?,city_name=?,exploration_type=? WHERE id=?').run(...fiscal.values, id)
+// Mesma IE só é conflito para o mesmo produtor (fazenda com sócios é cadastrada para cada um).
+const farmWithRegistration = (database, producerId, stateRegistration, exceptId = 0) =>
+  database.prepare('SELECT id,name FROM farms WHERE producer_id=? AND state_registration=? AND id<>?').get(producerId, stateRegistration, exceptId)
 app.post('/api/farms', (req, res) => {
   const { producer_id, name, ownership_type } = req.body
   const a = addressValues(req.body)
@@ -172,7 +177,8 @@ app.post('/api/farms', (req, res) => {
   let partners = []
   try { partners = Array.isArray(req.body.partners) ? req.body.partners : JSON.parse(req.body.partners || '[]') } catch { return res.status(400).json({ error: 'Os dados dos sócios são inválidos.' }) }
   if (!producer_id || !name || stateRegistration.length < 8 || stateRegistration.length > 14 || !a.address || !a.addressNumber || a.zipCode.length !== 8 || !a.neighborhood || !['unique','shared'].includes(ownership_type)) return res.status(400).json({ error: 'Preencha os dados obrigatórios da fazenda. A Inscrição Estadual deve ter de 8 a 14 números e o CEP, 8.' })
-  if (req.db.prepare('SELECT id FROM farms WHERE state_registration=?').get(stateRegistration)) return res.status(409).json({ error: 'Já existe uma fazenda cadastrada com esta Inscrição Estadual.' })
+  const sameFarm = farmWithRegistration(req.db, producer_id, stateRegistration)
+  if (sameFarm) return res.status(409).json({ error: `Este produtor já tem uma fazenda com esta Inscrição Estadual: ${sameFarm.name}.` })
   const fiscal = farmFiscal(req.body)
   if (fiscal.error) return res.status(400).json({ error: fiscal.error })
   if (ownership_type === 'shared') {
@@ -199,7 +205,8 @@ app.put('/api/farms/:id', (req, res) => {
   let partners = []
   try { partners = Array.isArray(req.body.partners) ? req.body.partners : JSON.parse(req.body.partners || '[]') } catch { return res.status(400).json({ error: 'Os dados dos sócios são inválidos.' }) }
   if (!producer_id || !name || stateRegistration.length < 8 || stateRegistration.length > 14 || !a.address || !a.addressNumber || a.zipCode.length !== 8 || !a.neighborhood || !['unique','shared'].includes(ownership_type)) return res.status(400).json({ error: 'Preencha os dados obrigatórios da fazenda. A Inscrição Estadual deve ter de 8 a 14 números e o CEP, 8.' })
-  if (req.db.prepare('SELECT id FROM farms WHERE state_registration=? AND id<>?').get(stateRegistration, req.params.id)) return res.status(409).json({ error: 'Já existe uma fazenda cadastrada com esta Inscrição Estadual.' })
+  const sameFarm = farmWithRegistration(req.db, producer_id, stateRegistration, req.params.id)
+  if (sameFarm) return res.status(409).json({ error: `Este produtor já tem uma fazenda com esta Inscrição Estadual: ${sameFarm.name}.` })
   const fiscal = farmFiscal(req.body)
   if (fiscal.error) return res.status(400).json({ error: fiscal.error })
   if (!req.db.prepare('SELECT id FROM producers WHERE id=?').get(producer_id)) return res.status(400).json({ error: 'Selecione um produtor válido.' })
@@ -225,15 +232,20 @@ app.put('/api/farms/:id', (req, res) => {
 app.delete('/api/farms/:id', (req, res) => { req.db.prepare('DELETE FROM farms WHERE id=?').run(req.params.id); res.status(204).end() })
 
 app.get('/api/participants', (req, res) => res.json(req.db.prepare('SELECT * FROM participants ORDER BY name').all()))
+const participantWithDocument = (database, document, exceptId = 0) => database.prepare('SELECT id,name FROM participants WHERE document=? AND id<>?').get(document, exceptId)
 app.post('/api/participants', (req, res) => {
   const { name, document } = req.body; const doc = cleanDocument(document)
   if (!name || ![11,14].includes(doc.length)) return res.status(400).json({ error: 'Informe nome e CPF/CNPJ válido.' })
+  const sameParticipant = participantWithDocument(req.db, doc)
+  if (sameParticipant) return res.status(409).json({ error: `Este CPF/CNPJ já está cadastrado como participante: ${sameParticipant.name}.` })
   const info = req.db.prepare('INSERT INTO participants (name,document) VALUES (?,?)').run(name.trim(),doc)
   res.status(201).json(req.db.prepare('SELECT * FROM participants WHERE id=?').get(info.lastInsertRowid))
 })
 app.put('/api/participants/:id', (req, res) => {
   const name = cleanText(req.body.name); const doc = cleanDocument(req.body.document)
   if (!name || ![11,14].includes(doc.length)) return res.status(400).json({ error: 'Informe nome e CPF/CNPJ válido.' })
+  const sameParticipant = participantWithDocument(req.db, doc, req.params.id)
+  if (sameParticipant) return res.status(409).json({ error: `Este CPF/CNPJ já está cadastrado como participante: ${sameParticipant.name}.` })
   const info = req.db.prepare('UPDATE participants SET name=?,document=? WHERE id=?').run(name,doc,req.params.id)
   if (!info.changes) return res.status(404).json({ error: 'Participante não encontrado.' })
   res.json(req.db.prepare('SELECT * FROM participants WHERE id=?').get(req.params.id))
@@ -562,14 +574,24 @@ app.get('/api/attachments/:id', (req, res) => {
 })
 app.delete('/api/attachments/:id', (req, res) => { req.db.prepare('DELETE FROM attachments WHERE id=?').run(req.params.id); res.status(204).end() })
 app.get('/api/invoices/:id/xml', (req, res) => { const row=req.db.prepare('SELECT original_filename,xml_content,is_manual FROM invoices WHERE id=?').get(req.params.id); if(!row)return res.status(404).end(); if(row.is_manual)return res.status(409).json({ error: 'Lançamentos manuais não possuem XML.' }); res.type('application/xml').attachment(row.original_filename).send(row.xml_content) })
+// Nota que veio da SEFAZ volta a ficar guardada ao ser excluída: dá para importar de novo em
+// "Importar guardadas", sem nova consulta (a SEFAZ não reenvia documentos já entregues).
+function deleteInvoice(database, id) {
+  const key = database.prepare('SELECT access_key FROM invoices WHERE id=?').get(id)?.access_key
+  const changes = database.prepare('DELETE FROM invoices WHERE id=?').run(id).changes
+  if (changes && key) {
+    database.prepare("UPDATE sefaz_documents SET status='pending' WHERE access_key=? AND status='imported'").run(key)
+    database.prepare('UPDATE sefaz_summaries SET imported=0 WHERE access_key=?').run(key)
+  }
+  return changes
+}
 app.delete('/api/invoices/bulk', (req, res) => {
   const ids = [...new Set((Array.isArray(req.body.ids) ? req.body.ids : []).map(Number).filter(Number.isInteger))]
   if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos uma nota.' })
-  const remove = req.db.prepare('DELETE FROM invoices WHERE id=?')
-  const removeAll = req.db.transaction(() => ids.reduce((total, id) => total + remove.run(id).changes, 0))
+  const removeAll = req.db.transaction(() => ids.reduce((total, id) => total + deleteInvoice(req.db, id), 0))
   res.json({ deleted: removeAll() })
 })
-app.delete('/api/invoices/:id', (req, res) => { req.db.prepare('DELETE FROM invoices WHERE id=?').run(req.params.id); res.status(204).end() })
+app.delete('/api/invoices/:id', (req, res) => { deleteInvoice(req.db, req.params.id); res.status(204).end() })
 
 const distDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist')
 if (fs.existsSync(distDir)) {

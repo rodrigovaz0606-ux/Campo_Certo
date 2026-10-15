@@ -94,6 +94,10 @@ NOVIDADES DESTA VERSAO
   editavel.
 - Nova classificacao Combustivel (NCM 2710, 2711, 2207 etanol, 3826). As notas ja importadas como
   "Outros" com esses NCMs sao reclassificadas uma unica vez.
+- Fazendas: a mesma Inscricao Estadual pode ser cadastrada para produtores diferentes (fazenda com
+  socios, uma para cada produtor). Corrige o erro ao editar ou ao recadastrar fazenda apagada.
+- Mensagens de cadastro repetido dizem qual produtor, fazenda ou participante ja usa o documento.
+- Nota da SEFAZ excluida na Conferencia volta para as guardadas e pode ser importada de novo.
 "@
 Set-Content -LiteralPath (Join-Path $stageRoot 'LEIA-ME-ATUALIZACAO.txt') -Value $readme -Encoding UTF8
 
