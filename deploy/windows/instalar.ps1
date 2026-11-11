@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $serviceName = 'CampoCertoServidor'
 $installRoot = Join-Path $env:ProgramData 'CampoCerto'
@@ -59,7 +59,7 @@ if ($existingTask) { Unregister-ScheduledTask -TaskName $serviceName -Confirm:$f
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$startScript`"" -WorkingDirectory $appRoot
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -MultipleInstances IgnoreNew
+$settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName $serviceName -Description 'Servidor interno do sistema Campo Certo' -Action $action -Trigger $trigger -Principal $principal -Settings $settings | Out-Null
 
 if (-not (Get-NetFirewallRule -DisplayName 'Campo Certo - HTTP' -ErrorAction SilentlyContinue)) {
@@ -68,14 +68,27 @@ if (-not (Get-NetFirewallRule -DisplayName 'Campo Certo - HTTP' -ErrorAction Sil
 
 Start-ScheduledTask -TaskName $serviceName
 $ready = $false
-for ($attempt = 0; $attempt -lt 20; $attempt++) {
-  Start-Sleep -Milliseconds 500
+for ($attempt = 0; $attempt -lt 60; $attempt++) {
+  Start-Sleep -Seconds 1
   try {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/health" -TimeoutSec 2
     if ($health.status -eq 'ok') { $ready = $true; break }
   } catch {}
 }
-if (-not $ready) { throw 'O servico foi instalado, mas nao respondeu. Verifique o Agendador de Tarefas.' }
+if (-not $ready) {
+  # Mostra o motivo: estado da tarefa e o erro do próprio programa rodando alguns segundos direto.
+  $info = Get-ScheduledTaskInfo -TaskName $serviceName -ErrorAction SilentlyContinue
+  Write-Host "Tarefa: ultimo resultado $($info.LastTaskResult), ultima execucao $($info.LastRunTime)" -ForegroundColor Yellow
+  $env:NODE_ENV = 'production'; $env:PORT = "$port"
+  $env:JWT_SECRET = (Get-Content -LiteralPath $secretFile -Raw).Trim()
+  $out = Join-Path $env:TEMP 'campocerto-diagnostico.txt'
+  $proc = Start-Process -FilePath (Join-Path $appRoot 'runtime\node.exe') -ArgumentList "`"$(Join-Path $appRoot 'server\index.js')`"" -WorkingDirectory $appRoot -RedirectStandardError $out -RedirectStandardOutput "$out.saida" -PassThru -WindowStyle Hidden
+  Start-Sleep -Seconds 8
+  if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+  Write-Host '--- saida do programa ---' -ForegroundColor Yellow
+  Get-Content -LiteralPath "$out.saida", $out -ErrorAction SilentlyContinue | Select-Object -Last 25 | ForEach-Object { Write-Host $_ }
+  throw 'O servico foi instalado, mas nao respondeu. Mande uma foto desta tela.'
+}
 
 $ipv4 = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
   Where-Object { $_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -ne 'WellKnown' } |
