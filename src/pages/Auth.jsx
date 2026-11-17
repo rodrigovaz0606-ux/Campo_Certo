@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sprout } from "lucide-react";
 import { api } from "../api";
 import { ThemeToggle } from "../components";
@@ -6,6 +6,24 @@ import { ThemeToggle } from "../components";
 export function Auth({ onAuth, theme, onThemeToggle }) {
   const [loading, setLoading] = useState(false),
     [error, setError] = useState("");
+  const [sso, setSso] = useState(false);
+  useEffect(() => {
+    api("/auth/sso").then((r) => setSso(Boolean(r?.enabled))).catch(() => {});
+  }, []);
+  const entrarComSso = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const { url } = await api("/auth/sso/start", {
+        method: "POST",
+        body: JSON.stringify({ redirect_uri: `${location.origin}/callback` }),
+      });
+      location.assign(url);
+    } catch (e) {
+      setError(e.message);
+      setLoading(false);
+    }
+  };
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -85,6 +103,11 @@ export function Auth({ onAuth, theme, onThemeToggle }) {
               {loading ? "Aguarde..." : "Entrar"}
             </button>
           </form>
+          {sso && (
+            <button type="button" className="secondary" disabled={loading} onClick={entrarComSso} style={{ marginTop: 12, width: "100%" }}>
+              Entrar com SaintSSO
+            </button>
+          )}
         </div>
       </main>
     </div>

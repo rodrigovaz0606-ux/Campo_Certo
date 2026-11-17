@@ -18,6 +18,37 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+// Retorno do SaintSSO: troca o código pela sessão local e volta para a tela inicial.
+function SsoCallback({ onAuth }) {
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const voltar = () => { history.replaceState(null, "", "/"); };
+    if (params.get("error")) {
+      voltar();
+      setError(params.get("error") === "access_denied" ? "Seu pacote não inclui o Campo Certo ou o acesso foi negado." : "Não foi possível entrar pelo SaintSSO.");
+      return;
+    }
+    api("/auth/sso/callback", { method: "POST", body: JSON.stringify({ code: params.get("code"), state: params.get("state") }) })
+      .then((data) => {
+        sessionStorage.removeItem("active-company");
+        localStorage.setItem("token", data.token);
+        localStorage.setItem("user", JSON.stringify(data.user));
+        voltar();
+        onAuth(data.user);
+      })
+      .catch((e) => { voltar(); setError(e.message); });
+  }, []);
+  return (
+    <main style={{ display: "grid", placeItems: "center", minHeight: "100vh", gap: 12, textAlign: "center" }}>
+      <div>
+        {error ? <p className="error">{error}</p> : <p>Entrando pelo SaintSSO…</p>}
+        {error && <a href="/">Voltar ao login</a>}
+      </div>
+    </main>
+  );
+}
+
 function App() {
   useEffect(() => {
     const syncAccount = event => {
@@ -51,6 +82,10 @@ function App() {
     api("/me").then(current => { localStorage.setItem("user", JSON.stringify(current)); setUser(current); }).catch(() => {});
   }, []);
   const toggleTheme = () => setTheme((current) => current === "dark" ? "light" : "dark");
+  const [returning, setReturning] = useState(() => location.pathname === "/callback");
+  if (returning && !user) {
+    return <SsoCallback onAuth={(u) => { setUser(u); setReturning(false); }} />;
+  }
   return user ? (
     <Shell
       user={user}

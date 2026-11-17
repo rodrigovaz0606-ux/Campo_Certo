@@ -1,6 +1,8 @@
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import crypto from 'node:crypto'
 import { registry as db, companyDatabase, createCompany } from './tenancy.js'
+import { ssoEnabled, ssoStart, ssoFinish } from './sso.js'
 
 const clean = value => String(value || '').trim()
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
@@ -36,6 +38,36 @@ export function identityRoutes(app, { secret, auth, adminOnly }) {
     if (!user || !await bcrypt.compare(String(req.body.password || ''), user.password_hash)) return res.status(401).json({ error: 'E-mail ou senha incorretos.' })
     const current = db.prepare('SELECT password_hash,session_version FROM users WHERE id=?').get(user.id)
     if (!current || current.password_hash !== user.password_hash || current.session_version !== user.session_version) return res.status(401).json({ error: 'O acesso foi atualizado. Entre novamente.' })
+    loginResponse(res, user.id)
+  }))
+
+  // Login único (SaintSSO). A conta local é ligada ao `sub` do SSO, nunca ao e-mail: o SSO não verifica e-mails,
+  // então vincular por e-mail deixaria alguém assumir a conta de outra pessoa.
+  app.get('/api/auth/sso', (req, res) => res.json({ enabled: ssoEnabled() }))
+  app.post('/api/auth/sso/start', asyncRoute(async (req, res) => {
+    if (!ssoEnabled()) return res.status(404).json({ error: 'Login único desativado.' })
+    const redirectUri = clean(req.body.redirect_uri)
+    if (!/^https?:\/\/[^\s#]+$/.test(redirectUri)) return res.status(400).json({ error: 'Endereço de retorno inválido.' })
+    res.json({ url: await ssoStart(redirectUri) })
+  }))
+  app.post('/api/auth/sso/callback', asyncRoute(async (req, res) => {
+    if (!ssoEnabled()) return res.status(404).json({ error: 'Login único desativado.' })
+    let claims
+    try { claims = await ssoFinish(clean(req.body.code), clean(req.body.state)) }
+    catch (error) { return res.status(401).json({ error: error.message }) }
+    let user = db.prepare('SELECT u.id FROM users u JOIN companies c ON c.id=u.company_id WHERE u.sso_sub=? AND c.deleted_at IS NULL').get(claims.sub)
+    if (!user) {
+      // Primeiro acesso: cada assinante do SSO ganha a própria empresa (dados isolados) e entra como usuário comum.
+      const name = clean(claims.name) || clean(claims.email) || 'Usuário'
+      let email = clean(claims.email).toLowerCase()
+      if (!email || emailOwner(email)) email = `${claims.sub}@sso.invalid`
+      const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10)
+      const id = db.transaction(() => {
+        const company = createCompany(name.slice(0, 120))
+        return Number(db.prepare('INSERT INTO users(name,email,password_hash,is_admin,company_id,sso_sub) VALUES (?,?,?,0,?,?)').run(name.slice(0, 100), email, hash, company.id, claims.sub).lastInsertRowid)
+      })()
+      user = { id }
+    }
     loginResponse(res, user.id)
   }))
 

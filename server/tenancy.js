@@ -37,6 +37,10 @@ try { registry.transaction(() => {
   if (!columns.has('is_admin')) registry.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0')
   if (!columns.has('company_id')) registry.exec('ALTER TABLE users ADD COLUMN company_id INTEGER NOT NULL DEFAULT 1 REFERENCES companies(id)')
   if (!columns.has('session_version')) registry.exec('ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1')
+  if (!columns.has('sso_sub')) {
+    registry.exec('ALTER TABLE users ADD COLUMN sso_sub TEXT')
+    registry.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_sso_sub ON users(sso_sub) WHERE sso_sub IS NOT NULL')
+  }
   const admins = registry.prepare('SELECT id FROM users WHERE is_admin=1').all()
   const total = registry.prepare('SELECT COUNT(*) total FROM users').get().total
   if (total && admins.length !== 1) throw new Error('Migração interrompida: é necessário identificar um único administrador existente. Nenhum usuário foi promovido ou rebaixado.')
