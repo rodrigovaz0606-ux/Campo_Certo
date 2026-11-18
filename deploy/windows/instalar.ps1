@@ -43,6 +43,16 @@ $appRoot = Join-Path $installRoot 'app'
 $env:NODE_ENV = 'production'
 $env:PORT = '80'
 $env:JWT_SECRET = (Get-Content -LiteralPath (Join-Path $installRoot 'jwt-secret.txt') -Raw).Trim()
+# Configuração extra (login único SaintSSO, integração com o Emissor), em NOME=valor por linha.
+# Fica fora da pasta app, então as atualizações não a apagam.
+$extra = Join-Path $installRoot 'config.env'
+if (Test-Path -LiteralPath $extra) {
+  foreach ($linha in Get-Content -LiteralPath $extra) {
+    if ($linha -match '^\s*([A-Z][A-Z0-9_]*)\s*=(.*)$' -and $Matches[1] -notin @('PORT', 'JWT_SECRET', 'NODE_ENV')) {
+      Set-Item -Path "Env:$($Matches[1])" -Value $Matches[2].Trim()
+    }
+  }
+}
 Set-Location -LiteralPath $appRoot
 & (Join-Path $appRoot 'runtime\node.exe') (Join-Path $appRoot 'server\index.js')
 exit $LASTEXITCODE

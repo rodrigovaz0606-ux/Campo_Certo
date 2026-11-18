@@ -14,6 +14,7 @@ import { buildLcdpr, mergeSettings, farmLcdpr, defaultAccountant, LCDPR_LAYOUT_V
 import { validateLcdpr } from './lcdpr-validator.js'
 import { readCertificate, sealCertificate, openCertificate, syncProducer, importStored, sefazStatus, UF_CODES } from './sefaz.js'
 import { consultaCadastro } from './cadastro.js'
+import { integrationRoutes } from './integracao.js'
 
 const app = express()
 const port = Number(process.env.PORT || 3333)
@@ -23,7 +24,8 @@ if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || secret.
 }
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: 250, fileSize: 10 * 1024 * 1024 } })
 app.use(cors())
-app.use(express.json({ limit: '2mb' }))
+// Corpo cru guardado só para a integração com o Emissor, que confere a assinatura dele.
+app.use(express.json({ limit: '2mb', verify: (req, res, buffer) => { if (req.url === '/api/integracao/emissor') req.corpoBruto = Buffer.from(buffer) } }))
 app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next() })
 
 app.get('/api/health', (req, res) => {
@@ -98,6 +100,8 @@ function adminOnly(req, res, next) {
   next()
 }
 
+// Antes do login: o Emissor se identifica pela assinatura, não por sessão.
+integrationRoutes(app, { importerFor: (database, producer) => invoiceImporter(database, producer), deleteInvoice: (database, id) => deleteInvoice(database, id) })
 identityRoutes(app, { secret, auth, adminOnly })
 app.get('/api/backups', adminOnly, (req, res) => res.json({ folder: backupRoot, items: listBackups() }))
 app.post('/api/backups', adminOnly, asyncRoute(async (req, res) => res.status(201).json(await runBackup('Manual'))))

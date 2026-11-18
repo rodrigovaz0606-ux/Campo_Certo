@@ -5,7 +5,8 @@ import crypto from 'node:crypto'
 const issuer = (process.env.SSO_ISSUER || 'http://localhost:8080').replace(/\/+$/, '')
 const clientId = process.env.SSO_CLIENT_ID || 'campo-certo-web'
 const clientSecret = process.env.SSO_CLIENT_SECRET || ''
-const enabled = process.env.SSO_ENABLED !== 'false'
+// Desligado por padrão: só liga com SSO_ENABLED=true (e o SaintSSO no ar em SSO_ISSUER).
+const enabled = process.env.SSO_ENABLED === 'true'
 const pending = new Map() // state -> { verifier, nonce, redirectUri, exp }
 const b64u = buffer => buffer.toString('base64url')
 
