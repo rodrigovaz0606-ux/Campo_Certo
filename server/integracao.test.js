@@ -35,9 +35,9 @@ test('integração com o Emissor: recebe nota autorizada e cancelamento, com ass
     const response = await fetch(`${app.url}/api${endpoint}`, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body && JSON.stringify(body) })
     return { status: response.status, data: await response.json().catch(() => null) }
   }
-  const enviar = async (pedido, { segredo = SEGREDO, hora = Math.floor(Date.now() / 1000), cabecalhos = {} } = {}) => {
+  const enviar = async (pedido, { segredo = SEGREDO, hora = Math.floor(Date.now() / 1000), cabecalhos = {}, rota = '' } = {}) => {
     const corpo = JSON.stringify(pedido)
-    const response = await fetch(`${app.url}/api/integracao/emissor`, { method: 'POST', body: corpo, headers: { 'Content-Type': 'application/json', 'X-Integracao-Hora': String(hora), 'X-Integracao-Assinatura': assinarPedido(segredo, hora, Buffer.from(corpo)), ...cabecalhos } })
+    const response = await fetch(`${app.url}/api/integracao/emissor${rota}`, { method: 'POST', body: corpo, headers: { 'Content-Type': 'application/json', 'X-Integracao-Hora': String(hora), 'X-Integracao-Assinatura': assinarPedido(segredo, hora, Buffer.from(corpo)), ...cabecalhos } })
     return { status: response.status, data: await response.json().catch(() => null) }
   }
 
@@ -45,8 +45,17 @@ test('integração com o Emissor: recebe nota autorizada e cancelamento, com ass
   const admin = (await call('/auth/register', null, { method: 'POST', body: { name: 'Admin', email: 'admin@t.local', password: 'teste123' } })).data.token
   const address = { address: 'Rua 1', address_number: '10', zip_code: '76530000', neighborhood: 'Centro' }
   const joao = (await call('/producers', admin, { method: 'POST', body: { name: 'Joao', cpf: CPF, ...address } })).data
-  const fazenda = (await call('/farms', admin, { method: 'POST', body: { producer_id: joao.id, name: 'Faz Boa Vista', state_registration: '111211212', address: 'GO 164', address_number: 'SN', zip_code: '76520000', neighborhood: 'Zona Rural', ownership_type: 'unique', exploration_type: '1' } })).data
+  const fazenda = (await call('/farms', admin, { method: 'POST', body: { producer_id: joao.id, name: 'Faz Boa Vista', state_registration: '111211212', address: 'GO 164', address_number: 'SN', zip_code: '76520000', neighborhood: 'Zona Rural', ownership_type: 'unique', exploration_type: '1', uf: 'GO', city_code: '5208707', city_name: 'GOIANIA', complement: 'KM 5' } })).data
   assert.ok(fazenda?.id, JSON.stringify(fazenda))
+
+  // Fazendas do produtor para o emitente da NF-e (IE e endereço com município IBGE).
+  const fz = await enviar({ conta: null, documento: CPF }, { rota: '/fazendas' })
+  assert.equal(fz.status, 200, JSON.stringify(fz.data))
+  assert.equal(fz.data.produtor.nome, 'Joao')
+  assert.deepEqual(fz.data.fazendas, [{ id: fazenda.id, nome: 'Faz Boa Vista', ie: '111211212', endereco: { xLgr: 'GO 164', nro: 'SN', xCpl: 'KM 5', xBairro: 'Zona Rural', CEP: '76520000', cMun: '5208707', xMun: 'GOIANIA', UF: 'GO' } }])
+  assert.equal((await enviar({ conta: null, documento: CPF }, { rota: '/fazendas', segredo: 'outro-segredo-qualquer-0123456789abcdef' })).status, 401)
+  assert.equal((await enviar({ conta: null, documento: CPF }, { rota: '/fazendas', cabecalhos: { 'X-Forwarded-For': '200.1.2.3' } })).status, 403)
+  assert.deepEqual((await enviar({ conta: null, documento: '12345678000195' }, { rota: '/fazendas' })).data, { produtor: null, fazendas: [] })
 
   const chave = chaveDe(1)
   const nota = { tipo: 'nota', conta: null, chave, produtor: { documento: CPF, nome: 'JOAO DA SILVA' }, xml: notaXml(chave) }
@@ -105,4 +114,54 @@ test('integração com o Emissor: desligada sem o segredo', async t => {
   t.after(async () => { await app.stop(); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) })
   const r = await fetch(`${app.url}/api/integracao/emissor`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
   assert.equal(r.status, 404)
+})
+
+test('integração com o Emissor: produtor cadastrado no Emissor aparece aqui, sem sobrescrever o cadastro', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'campo-integracao-produtor-'))
+  const app = await start(dir, { INTEGRACAO_EMISSOR_SEGREDO: SEGREDO })
+  t.after(async () => { await app.stop(); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) })
+  const call = async (endpoint, token, { method = 'GET', body } = {}) => {
+    const response = await fetch(`${app.url}/api${endpoint}`, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body && JSON.stringify(body) })
+    return { status: response.status, data: await response.json().catch(() => null) }
+  }
+  const enviar = async pedido => {
+    const corpo = JSON.stringify(pedido), hora = Math.floor(Date.now() / 1000)
+    const r = await fetch(`${app.url}/api/integracao/emissor/produtor`, { method: 'POST', body: corpo, headers: { 'Content-Type': 'application/json', 'X-Integracao-Hora': String(hora), 'X-Integracao-Assinatura': assinarPedido(SEGREDO, hora, Buffer.from(corpo)) } })
+    return { status: r.status, data: await r.json().catch(() => null) }
+  }
+  const admin = (await call('/auth/register', null, { method: 'POST', body: { name: 'Admin', email: 'admin@t.local', password: 'teste123' } })).data.token
+
+  // Usuário local do Emissor (sem conta do SSO): vai para a empresa do administrador.
+  const endereco = { xLgr: 'FAZENDA BOA VISTA', nro: 'SN', xBairro: 'ZONA RURAL', CEP: '76530-000', xCpl: 'KM 5' }
+  let r = await enviar({ conta: null, documento: '333.444.555-66', nome: 'PEDRO ALVES', endereco })
+  assert.equal(r.status, 201, JSON.stringify(r.data))
+  let p = (await call('/producers', admin)).data.find(x => x.cpf === '33344455566')
+  assert.equal(p.name, 'PEDRO ALVES')
+  assert.equal(p.address, 'FAZENDA BOA VISTA'); assert.equal(p.zip_code, '76530000'); assert.equal(p.complement, 'KM 5')
+  // De novo: já existe, nada muda.
+  assert.equal((await enviar({ conta: null, documento: '33344455566', nome: 'OUTRO NOME', endereco: { xLgr: 'OUTRA RUA' } })).data.resultado, 'existente')
+  p = (await call('/producers', admin)).data.find(x => x.cpf === '33344455566')
+  assert.equal(p.name, 'PEDRO ALVES'); assert.equal(p.address, 'FAZENDA BOA VISTA')
+
+  // Produtor cadastrado aqui sem endereço completo: o Emissor só completa o que está vazio.
+  await call('/producers', admin, { method: 'POST', body: { name: 'Ana', cpf: '11122233344', address: 'Rua 1', address_number: '10', zip_code: '76530000', neighborhood: 'Centro' } })
+  r = await enviar({ conta: null, documento: '11122233344', nome: 'ANA EMISSOR', endereco: { xLgr: 'OUTRA', nro: '99', xBairro: 'OUTRO', CEP: '74000000', xCpl: 'CASA 2' } })
+  assert.equal(r.data.resultado, 'atualizado')
+  const ana = (await call('/producers', admin)).data.find(x => x.cpf === '11122233344')
+  assert.deepEqual([ana.name, ana.address, ana.address_number, ana.neighborhood, ana.zip_code, ana.complement], ['Ana', 'Rua 1', '10', 'Centro', '76530000', 'CASA 2'])
+
+  // Conta do SaintSSO: na empresa da conta, não na do administrador.
+  const empresa = (await call('/companies', admin, { method: 'POST', body: { name: 'Cliente' } })).data
+  const cliente = (await call('/users', admin, { method: 'POST', body: { name: 'Cliente', email: 'c@t.local', password: 'teste123', company_id: empresa.id } })).data
+  const registro = new Database(path.join(dir, 'produtor-rural.db'))
+  registro.prepare('UPDATE users SET sso_sub=? WHERE id=?').run('sub-cliente', cliente.id)
+  registro.close()
+  assert.equal((await enviar({ conta: 'sub-cliente', documento: '44455566677', nome: 'MARIA', endereco })).status, 201)
+  const tokenCliente = (await call('/auth/login', null, { method: 'POST', body: { email: 'c@t.local', password: 'teste123' } })).data.token
+  assert.deepEqual((await call('/producers', tokenCliente)).data.map(x => x.cpf), ['44455566677'])
+  assert.equal((await call('/producers', admin)).data.some(x => x.cpf === '44455566677'), false)
+  // Conta que ainda não entrou no Campo Certo: espera (o Emissor tenta de novo depois).
+  assert.equal((await enviar({ conta: 'sub-novo', documento: '55566677788', nome: 'X' })).status, 404)
+  // CNPJ não entra.
+  assert.equal((await enviar({ conta: null, documento: '12345678000195', nome: 'EMPRESA' })).status, 422)
 })

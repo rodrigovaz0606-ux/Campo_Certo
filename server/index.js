@@ -25,7 +25,7 @@ if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || secret.
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: 250, fileSize: 10 * 1024 * 1024 } })
 app.use(cors())
 // Corpo cru guardado só para a integração com o Emissor, que confere a assinatura dele.
-app.use(express.json({ limit: '2mb', verify: (req, res, buffer) => { if (req.url === '/api/integracao/emissor') req.corpoBruto = Buffer.from(buffer) } }))
+app.use(express.json({ limit: '2mb', verify: (req, res, buffer) => { if (req.url.startsWith('/api/integracao/emissor')) req.corpoBruto = Buffer.from(buffer) } }))
 app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next() })
 
 app.get('/api/health', (req, res) => {
